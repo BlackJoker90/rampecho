@@ -173,6 +173,8 @@ One button in **Output** runs twelve signal modes (SDR RGB Limited/Full and YCbC
 - In each mode it draws known codes (greys, colours checked against the BT.709/BT.2020 Y'CbCr formulas, 8-bit and 12-bit source codes), **reads back what the Pi scans out** and checks the link depth and the AVI infoframe: format, range, colorimetry and the VIC of the running mode.
 - It also reads the infoframes from the HDMI packet RAM: HDR metadata only in HDR, field by field against your settings (ST 2084 primaries and luminances; HLG without mastering data), and in Dolby Vision the infoframe the display switches on (the Dolby VSIF with low latency for Low Latency; for Standard the HDMI 1.4b VSIF or the Dolby VSIF without low latency).
 - Your signal settings come back afterwards; a quick check covers three modes in about 40 s.
+- A mode it cannot read back is marked **Not provable** with the reason, not failed: the scanout or the HDMI registers could not be read, or the kernel does not log the AVI infoframe (the Pi 5's driver). A run in which no mode could be proven ends as **No mode could be fully verified** instead of a pass. What it reads but does not match, a framebuffer it cannot decode included, still fails.
+- **Download Logs** includes the last self-test result, its output and a fresh scanout probe, so a failed or unverified run can be explained from the report.
 
 </details>
 

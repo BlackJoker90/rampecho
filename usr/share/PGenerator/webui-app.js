@@ -4317,7 +4317,7 @@ function selftestLinkText(link){
  const parts=[link.format];
  // 4:2:2 always reads as the fixed 12-bit container, not a depth.
  if(link.bpc&&!/4:2:2/.test(link.format)) parts.push(link.bpc+'-bit sent');
- if(link.csc) parts.push(link.csc==='unity'?'CSC unity':'range CSC active');
+ if(link.csc) parts.push(link.csc==='unity'?'CSC unity':link.csc==='unread'?'CSC not read':'range CSC active');
  if(link.fb) parts.push('framebuffer '+link.fb);
  return parts.join(' · ');
 }
@@ -4365,10 +4365,15 @@ function selftestRender(st){
  const modes=SELFTEST_MODES.filter(m=>state==='idle'||set==='full'||m.quick||results[m.id]);
  const passed=modes.filter(m=>results[m.id]&&results[m.id].status==='pass').length;
  const failedModes=modes.filter(m=>results[m.id]&&results[m.id].status==='fail');
- const vstate=running?'running':state==='passed'?'passed':(state==='failed'||state==='error')?'failed':'idle';
+ // A run with no mode bit-exact proved nothing (pgen_selftest.pl ends it as
+ // "unverified"; an older script said "passed" with every mode refused).
+ const unverified=state==='unverified'||(state==='passed'&&!passed);
+ const vstate=running?'running':unverified?'idle':state==='passed'?'passed':(state==='failed'||state==='error')?'failed':'idle';
  verdict.setAttribute('data-state',vstate);
  if(running){
   title.textContent=selftestState.current?'Testing '+selftestState.current:'Starting the self-test';
+ }else if(unverified){
+  title.textContent='No mode could be fully verified';
  }else if(state==='passed'){
   // Lead with what was proven: modes the link cannot carry are not failures.
   const skipped=modes.filter(m=>results[m.id]&&results[m.id].status==='skip').length;
@@ -4383,7 +4388,7 @@ function selftestRender(st){
  }else{
   title.textContent='Not run yet';
  }
- sub.textContent=selftestState.message||'Full\u00a0Test: 12 modes, about\u00a03\u00a0min. Quick\u00a0Check: 3 modes, about\u00a040\u00a0s. Needs a display and no calibration software attached.';
+ sub.textContent=selftestSubText(selftestState);
  selftestMarkStale();
  const pct=running&&selftestState.steps?Math.round(100*(selftestState.step||0)/selftestState.steps):(state==='idle'?0:100);
  const fill=document.getElementById('selftestProgress');
@@ -4419,13 +4424,20 @@ function selftestMarkStale(){
  const verdict=document.getElementById('selftestVerdict');
  const sub=document.getElementById('selftestSub');
  if(!verdict||!sub) return;
- const done=st.state==='passed'||st.state==='failed';
+ const done=st.state==='passed'||st.state==='failed'||st.state==='unverified';
  const now=(config&&config.mode_idx!=null)?String(config.mode_idx):'';
  const stale=done&&st.mode_idx!=null&&now!==''&&String(st.mode_idx)!==now;
  verdict.toggleAttribute('data-stale',stale);
  if(stale) sub.textContent='This result is for '+(st.resolution||'the previous output resolution')+'. The output now runs another resolution, so run the test again to prove it.';
- else if(verdict.dataset.staleShown) sub.textContent=st.message||'';
+ else if(verdict.dataset.staleShown) sub.textContent=selftestSubText(st);
  if(stale) verdict.dataset.staleShown='1'; else delete verdict.dataset.staleShown;
+}
+// The verdict's second line: the script's message, except after an older
+// script's "passed" with no mode proven, whose message claims bit-exact.
+function selftestSubText(st){
+ st=st||{};
+ if(st.state==='passed'&&!(st.scenarios||[]).some(r=>r&&r.status==='pass')) return 'No mode was proven bit-exact in this run.';
+ return st.message||'Full Test: 12 modes, about 3 min. Quick Check: 3 modes, about 40 s. Needs a display and no calibration software attached.';
 }
 function selftestPoll(delay){
  if(selftestPollTimer) clearTimeout(selftestPollTimer);

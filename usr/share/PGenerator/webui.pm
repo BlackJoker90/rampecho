@@ -12132,6 +12132,41 @@ sub webui_logs_bundle_patch_logs (@) {
  return @out;
 }
 
+# The Signal Self-Test for the diagnostic report: its last result (every
+# mode's checks and notes, e.g. why a framebuffer could not be read back),
+# the script's own output, and a scanout probe taken now (pgen_scanout
+# through SCANOUT_PROBE: each plane, its format, and why it cannot be read,
+# as the self-test sees it). A report from a board that fails the test
+# then says why without a second round. Paths and the probe can be given
+# for tests.
+sub webui_logs_bundle_selftest (@) {
+ my %o=@_;
+ my $state=$o{state} || $_selftest_state_file;
+ my $log=$o{log} || "/tmp/pgen-selftest.log";
+ my $probe=$o{probe} || sub { return &sudo("SCANOUT_PROBE",0,0,1,1); };
+ my @out;
+ push @out, "", "--- Signal Self-Test (last result, $state) ---";
+ my $json=&_webui_slurp($state);
+ chomp($json);
+ push @out, ($json ne "") ? $json : "(none found)";
+ push @out, "", "--- Signal Self-Test Output ($log, last 100 lines) ---";
+ my $text="";
+ if(-f $log && open(my $fh,"-|","tail","-n","100","--",$log)) {
+  local $/;
+  $text=<$fh>;
+  close($fh);
+ }
+ $text="" if(!defined $text);
+ chomp($text);
+ push @out, ($text ne "") ? $text : "(none found)";
+ push @out, "", "--- Scanout Probe (SCANOUT_PROBE 0 0 1 1, now) ---";
+ my $p=eval { $probe->() };
+ $p="" if(!defined $p);
+ chomp($p);
+ push @out, ($p ne "") ? $p : "(no output)";
+ return @out;
+}
+
 # The daemon's own logs for the diagnostic report. Why a renderer did not
 # start is written only there: its start output (the renderer's first
 # lines, e.g. a failed drmSetMaster), the daemon's debug log, the stderr of
@@ -12329,6 +12364,9 @@ sub webui_create_logs_bundle (@) {
  my $ram_packet=`grep RAM_PACKET_CONFIG /sys/kernel/debug/dri/*/hdmi*_regs 2>/dev/null`;
  chomp($ram_packet);
  push @out, "RAM_PACKET_CONFIG (bit1=vendor/DV VSIF, bit2=AVI, bit7=DRM/HDR):", ($ram_packet ne "" ? $ram_packet : "(debugfs unavailable)");
+
+ # Signal Self-Test: last result, its output, a scanout probe now
+ push @out, &webui_logs_bundle_selftest();
 
 	 # Operations file
 	 push @out, "", "--- operations.txt ---";

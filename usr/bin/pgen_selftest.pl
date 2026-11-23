@@ -193,10 +193,17 @@ sub sudo_cmd {
 }
 
 # The scanned-out plane: the largest one with a decodable, mapped buffer.
+# Without one, error says why, in three kinds: "no-plane" (pgen_scanout ran
+# and no plane holds a framebuffer: nothing is scanned out), a plane the
+# probe found but could not read (unreadable 1, error is pgen_scanout's
+# word: no-handle, map-dumb, mmap, tiled, unsupported-format,
+# region-outside, or no-area for an answer without one; width and height
+# are the plane's), or a probe that did not answer (probe 1: no output, or
+# an ERR before any plane).
 sub scanout {
  my ($x,$y,$w,$h)=@_;
  my $out=&sudo_cmd("SCANOUT_PROBE",$x,$y,$w,$h);
- my (@planes,$cur);
+ my (@planes,$cur,$probe_err);
  foreach my $line (split(/\n/,$out)) {
   if($line=~/^FB .*width=(\d+) height=(\d+) format=(\S+) bits=(\d+)/) {
    $cur={ width=>$1, height=>$2, format=>$3, bits=>$4 };
@@ -205,17 +212,31 @@ sub scanout {
    $cur->{area}=[[$1,$2],[$3,$4],[$5,$6]];
   } elsif($cur && $line=~/^ERR (\S+)/) {
    $cur->{error}=$1;
+  } elsif(!$cur && $line=~/^ERR (.*?)\s*$/) {
+   $probe_err=$1;
   }
  }
  my @good=sort { $b->{width}*$b->{height} <=> $a->{width}*$a->{height} } grep { $_->{area} } @planes;
  return $good[0] if(@good);
- return { error=>(@planes ? ($planes[0]{error} || "no-area") : "no-plane") };
+ if(!@planes) {
+  return { error=>"no-plane" } if(defined($probe_err) && $probe_err eq "no-plane");
+  return { error=>"probe: ".(defined($probe_err) && $probe_err ne "" ? $probe_err : ($out=~/\S/ ? "output not understood" : "no output")), probe=>1 };
+ }
+ my ($big)=sort { $b->{width}*$b->{height} <=> $a->{width}*$a->{height} } @planes;
+ return { error=>($big->{error} || "no-area"), unreadable=>1, width=>$big->{width}, height=>$big->{height}, format=>$big->{format} };
 }
 
+# The scanned-out size and the probe's answer. Right after a switch the
+# renderer's first frame may not be committed yet, so "no plane" is asked
+# again for up to 1.5 s before it counts.
 sub screen_size {
- my $plane=&scanout(0,0,1,1);
- return (0,0) if(!$plane->{width});
- return ($plane->{width},$plane->{height});
+ my $plane;
+ for(my $try=0;$try<4;$try++) {
+  sleep(0.5) if($try);
+  $plane=&scanout(0,0,1,1);
+  last if(($plane->{error} || "") ne "no-plane");
+ }
+ return ($plane->{width} || 0,$plane->{height} || 0,$plane);
 }
 
 sub hdmi_regs {
@@ -637,6 +658,9 @@ if(!&save_user_state()) {
 my $failed=0;
 my $skipped=0;
 my $refused=0;
+# Of the skipped: modes whose codes were read back bit-exact, where only an
+# infoframe or the scanned-out mode could not be read.
+my $codes_exact=0;
 for(my $n=0;$n<@scenarios;$n++) {
  my $sc=$scenarios[$n];
  my $entry=$state{scenarios}[$n];
@@ -669,40 +693,74 @@ for(my $n=0;$n<@scenarios;$n++) {
   &write_state();
   next;
  }
- my ($w,$h)=&screen_size();
- if(!$w) {
+ my ($w,$h,$fb)=&screen_size();
+ if(($fb->{error} || "") eq "no-plane") {
   $entry->{status}="fail"; $entry->{note}="Nothing is being scanned out after the mode switch."; $failed++;
   $state{step}+=&window_count($sc);
   &write_state();
   next;
  }
+ # A probe that cannot map the plane's buffer or did not answer says
+ # nothing about the scanout: the signalling below is still checked, the
+ # codes are not verifiable. On the Pi 5's 64-bit kernel a pgen_scanout
+ # without a 64-bit off_t cannot map the buffer (ERR mmap: DRM's mmap
+ # offsets start at 4 GiB there).
+ # A plane it maps but cannot decode is another matter: pgen_scanout reads
+ # linear XRGB/XBGR 8888 and 2101010 (pgen_scanout.c), what the renderer
+ # scans out, so a tiled buffer, another pixel format, a plane smaller than
+ # the probe's window or an answer without codes is a change in what goes
+ # to the cable, and the mode fails.
+ my $fb_error=$fb->{area} ? "" : ($fb->{error} || "no-area");
+ my $fb_unreadable=($fb_error ne "") ? "pgen_scanout: $fb_error" : "";
+ my %fb_layout_note=(
+  "tiled"=>"The scanned-out framebuffer is tiled, which the probe cannot read, so the codes on the cable cannot be checked.",
+  "unsupported-format"=>"The scanned-out framebuffer has a pixel format the probe does not read (".($fb->{format} || "?")."), so the codes on the cable cannot be checked.",
+  "region-outside"=>"The scanned-out framebuffer (".($fb->{width} || 0)."x".($fb->{height} || 0).") is smaller than the probe's window, so the codes on the cable cannot be checked.",
+  "no-area"=>"The probe found the scanned-out framebuffer but returned no codes for it, so the codes on the cable cannot be checked.",
+ );
+ my $fb_layout=(!$fb->{probe} && $fb_layout_note{$fb_error}) ? $fb_layout_note{$fb_error} : "";
 
  # Link state.
  my $format=&link_format_for($sc);
  my %reg=&hdmi_regs();
- my %bpc_for_depth=(4=>8,5=>10,6=>12);
- my $bpc=$bpc_for_depth{($reg{"HDMI_DEEP_COLOR_CONFIG_1"} || 0) & 0xf} || 0;
+ # The deep colour field as vc4 writes it: 4/5/6 for 8/10/12 bpc (the
+ # Pi 4's patched module), 0 for 8 bpc and for 4:2:2 (no deep colour,
+ # upstream rpi-6.12.y vc4_hdmi.c vc5_hdmi_set_timings, BCM2711 and
+ # BCM2712). A register that is not there is no depth at all.
+ my %bpc_for_depth=(0=>8,4=>8,5=>10,6=>12);
+ my $dc=$reg{"HDMI_DEEP_COLOR_CONFIG_1"};
+ my $bpc=defined($dc) ? ($bpc_for_depth{$dc & 0xf} || 0) : 0;
  my $csc=$reg{"HDMI_CSC_12_11"};
  my $csc_unity=(defined($csc) && ($csc & 0xffff) == 0x2000) ? 1 : 0;
  my $prop=&quant_range_prop();
  my $if=&infoframes();
  my @avi=@{$if->{bytes}};
+ # The AVI comes from the kernel log, where the Pi 4's patched vc4 writes
+ # it at every mode set: there a readable log without a single AVI line
+ # is a module that lost the patch, and the AVI checks fail. The Pi 5's
+ # vc4 does not log them: there it is not verified.
+ my $avi_not_logged=(!$if->{unread} && !$if->{count} && board_is_pi5()) ? 1 : 0;
+ my $avi_unread=($if->{unread} || $avi_not_logged) ? 1 : 0;
  my %fmt_name=(0=>"RGB",1=>"YCbCr 4:2:2",2=>"YCbCr 4:4:4");
  my $avi_format=@avi > 4 ? ($fmt_name{($avi[4]>>5)&3} || "?") : "";
  my $avi_q=@avi > 6 ? (($avi[6]>>2)&3) : -1;
- $entry->{link}={ bpc=>$bpc, format=>$format, csc=>($csc_unity ? "unity" : "range"), prop=>$prop,
+ $entry->{link}={ bpc=>$bpc, format=>$format, csc=>(!defined($csc) ? "unread" : $csc_unity ? "unity" : "range"), prop=>$prop,
                   avi=>join(" ",map { sprintf("%02x",$_) } @avi[0..($#avi < 7 ? $#avi : 7)]), drm=>$if->{drm}, width=>$w, height=>$h };
+ $entry->{link}{readback}=$fb_unreadable if($fb_unreadable ne "");
 
  if($if->{unread}) {
   add_check($entry,"AVI infoframe",$format,"not verified (kernel log not readable)",0,1);
   $entry->{unverified}=1;
+ } elsif($avi_not_logged) {
+  add_check($entry,"AVI infoframe",$format,"not verified (no AVI infoframe in the kernel log: the Pi 5's vc4 module does not log them)",0,1);
+  $entry->{unverified}=1;
  } else {
   add_check($entry,"AVI colour format",$format,$avi_format || "none",$avi_format eq $format);
  }
- if(!$if->{unread} && $format eq "RGB") {
+ if(!$avi_unread && $format eq "RGB") {
   my $want_q=(($sc->{range} || "") eq "FULL") ? 2 : 1;
   add_check($entry,"AVI quantisation",$want_q == 2 ? "Full" : "Limited",$avi_q == 2 ? "Full" : $avi_q == 1 ? "Limited" : "Default",$avi_q == $want_q);
- } elsif(!$if->{unread} && $format=~/^YCbCr/ && @avi > 8) {
+ } elsif(!$avi_unread && $format=~/^YCbCr/ && @avi > 8) {
   # YQ (PB5 bits 7..6): 0 Limited, 1 Full
   my $want_yq=(($sc->{range} || "") eq "FULL") ? 1 : 0;
   my $avi_yq=($avi[8]>>6)&3;
@@ -710,15 +768,20 @@ for(my $n=0;$n<@scenarios;$n++) {
  }
  if($format ne "YCbCr 4:2:2") {
   my $want_bpc=$sc->{depth} > 10 ? 10 : $sc->{depth};
-  add_check($entry,"Link depth","$want_bpc-bit",$bpc ? "$bpc-bit" : "unknown",$bpc == $want_bpc);
+  if(!defined($dc)) {
+   add_check($entry,"Link depth","$want_bpc-bit","not verified (HDMI registers not readable)",0,1);
+   $entry->{unverified}=1;
+  } else {
+   add_check($entry,"Link depth","$want_bpc-bit",$bpc ? "$bpc-bit" : "unknown",$bpc == $want_bpc);
+  }
  }
  # HDR metadata from the packet gate (bit 7), so a frame left over from an
  # earlier HDR mode cannot pass SDR; the kernel log when the register is
  # unreadable.
  my $pkt=$reg{"HDMI_RAM_PACKET_CONFIG"};
  my $drm_on=defined($pkt) ? (($pkt & 0x80) ? 1 : 0) : $if->{drm};
- if(!defined($pkt) && $if->{unread}) {
-  add_check($entry,"HDR metadata",$sc->{drm} ? "DRM infoframe" : "none","not verified (packet gate and kernel log not readable)",0,1);
+ if(!defined($pkt) && $avi_unread) {
+  add_check($entry,"HDR metadata",$sc->{drm} ? "DRM infoframe" : "none","not verified (packet gate not readable, ".($if->{unread} ? "kernel log not readable" : "no infoframes in the kernel log").")",0,1);
   $entry->{unverified}=1;
  } elsif($sc->{drm}) {
   add_check($entry,"HDR metadata","DRM infoframe",$drm_on ? "DRM infoframe" : "none",$drm_on);
@@ -754,13 +817,24 @@ for(my $n=0;$n<@scenarios;$n++) {
   &dv_vsif_form_check($entry,$sc,$conf,$vsif,scalar(&vc4_dv_vsif_forms()),($capcode == 200 && ref($caps) eq "HASH") ? $caps : undef);
  }
  $sc->{matrix}=%$conf ? PGSelfTestCheck::ycc_matrix_for(@{PGSelfTestCheck::avi_colorimetry_expect($sc->{config}{signal_mode},$format,$conf->{colorimetry})},$h) : "";
- &infoframe_checks($entry,$sc,$format,$conf,\@avi,&dri_state(),$sc->{drm} ? &sudo_cmd("HDMI_PACKET",7) : "",$if->{unread});
+ &infoframe_checks($entry,$sc,$format,$conf,\@avi,&dri_state(),$sc->{drm} ? &sudo_cmd("HDMI_PACKET",7) : "",$avi_unread);
 
+ # A framebuffer the probe cannot decode fails as a check of its own, so the
+ # score, the detail table and the copied report name it.
+ if($fb_layout ne "") {
+  my %fb_got=("tiled"=>"tiled","unsupported-format"=>"pixel format ".($fb->{format} || "?"),
+              "region-outside"=>($fb->{width} || 0)."x".($fb->{height} || 0)." plane","no-area"=>"no codes");
+  add_check($entry,"Framebuffer readback","linear RGB",$fb_got{$fb_error} || $fb_error,0);
+ }
  # Scanout = wire only while the range CSC is unity (YCbCr, RGB Full, RGB
- # Limited on the patched vc4). Otherwise the codes are not provable here.
- my $provable=$csc_unity;
+ # Limited on the patched vc4) and the probe can read the framebuffer.
+ # Otherwise the codes are not provable here.
+ my $provable=($csc_unity && $fb_unreadable eq "") ? 1 : 0;
  if(!$provable) {
-  $entry->{note}="The vc4 range CSC is active after the framebuffer, so the codes on the cable cannot be read back in this mode.";
+  $entry->{note}=($fb_layout ne "") ? $fb_layout
+                : !defined($csc) ? "The HDMI registers could not be read, so the codes on the cable cannot be proven in this mode."
+                : !$csc_unity ? "The vc4 range CSC is active after the framebuffer, so the codes on the cable cannot be read back in this mode."
+                : "The framebuffer could not be read back ($fb_unreadable), so the codes are not verified.";
   $state{step}+=&window_count($sc);
  }
  my $range=($format eq "RGB") ? ($sc->{source_range} || $sc->{range} || "LIMITED") : "";
@@ -803,26 +877,42 @@ for(my $n=0;$n<@scenarios;$n++) {
    $got=$uniform ? "$a[0][0] $a[1][0] $a[2][0]" : "$a[0][0]-$a[0][1] $a[1][0]-$a[1][1] $a[2][0]-$a[2][1]";
    $ok=$uniform && $a[0][0] == $expect->[0] && $a[1][0] == $expect->[1] && $a[2][0] == $expect->[2];
   }
+  my $kind=($bits == 8 && $sc->{depth} >= 10) ? " (8-bit pattern)" : "";
+  # No try for this window returned codes, and the last one could not map
+  # the plane or did not answer (a sudo timeout under load): as at the
+  # first probe, not verified. Codes from an earlier try decide the window
+  # (a wrong code is never hidden by a later timeout); no plane, or a plane
+  # the probe cannot decode, still fails below.
+  if($got eq "" && ($plane->{probe} || ($plane->{error} || "")=~/^(?:no-handle|map-dumb|mmap)$/)) {
+   add_check($entry,$label.$kind,join(" ",@$expect),"not verified (pgen_scanout: $plane->{error})",0,1);
+   $entry->{unverified}=1;
+   $entry->{window_unread}="pgen_scanout: $plane->{error}";
+   $state{step}++;
+   &write_state();
+   next;
+  }
   $got="no readback (".($plane->{error} || "unknown").")" if($got eq "");
   $fb_format=$plane->{format} || $fb_format;
-  my $kind=($bits == 8 && $sc->{depth} >= 10) ? " (8-bit pattern)" : "";
   # The window's source code, for the WebUI swatch strip.
  add_check($entry,$label.$kind,join(" ",@$expect),$got,$ok,0,
            { r=>$r, g=>$g, b=>$b, max=>$max, full=>($range eq "FULL" ? 1 : 0), bits=>$bits });
   $state{step}++;
   &write_state();
  }
- $entry->{link}{fb}=$fb_format;
+ $entry->{link}{fb}=$fb_format || ($fb->{format} || "");
  if(!$provable) {
-  $entry->{status}=($entry->{passed} == $entry->{total}) ? "skip" : "fail";
+  $entry->{status}=($entry->{passed} == $entry->{total} && $fb_layout eq "") ? "skip" : "fail";
   $skipped++ if($entry->{status} eq "skip");
  } else {
   $entry->{status}=($entry->{passed} == $entry->{total}) ? "pass" : "fail";
   # Codes fine but the infoframe could not be read: not a pass.
   if($entry->{status} eq "pass" && $entry->{unverified}) {
    $entry->{status}="skip";
-   $entry->{note}="An infoframe or the scanned-out mode could not be read, so this mode is not fully verified.";
+   $entry->{note}=$entry->{window_unread} ? "Some windows could not be read back ($entry->{window_unread}), so this mode is not fully verified."
+                 : "An infoframe or the scanned-out mode could not be read, so this mode is not fully verified.";
    $skipped++;
+   # Bit-exact codes: every window read back and matched.
+   $codes_exact++ if(!$entry->{window_unread} && grep { $_->{swatch} } @{$entry->{checks}});
   }
  }
  $failed++ if($entry->{status} eq "fail");
@@ -833,7 +923,20 @@ my $total=scalar(@scenarios);
 if($failed) {
  &finish("failed","$failed of $total modes did not match. Your signal settings are back.");
 }
-my $refused_text=$refused ? " $refused ".($refused == 1 ? "mode is" : "modes are")." not possible with this display and resolution." : "";
-&finish("passed",$skipped ? "All provable modes are bit-exact; $skipped could not be read back.$refused_text Your signal settings are back."
-                          : ($refused ? "Every possible mode is bit-exact.$refused_text Your signal settings are back."
-                                      : "Every mode is bit-exact. Your signal settings are back."));
+# "passed" says something was proven: with no mode bit-exact (every one
+# refused by the link or the display, or not readable) the run proved
+# nothing, which is not a pass. The WebUI titles it "No mode could be fully
+# verified"; the message gives the reasons.
+# The modes that are not a pass, by reason, in the same words for both.
+my $unread=$skipped-$codes_exact;
+my $refused_text=$refused ? "$refused ".($refused == 1 ? "mode is" : "modes are")." not possible with this display and resolution." : "";
+my $exact_text=$codes_exact ? "$codes_exact ".($codes_exact == 1 ? "mode has" : "modes have")." bit-exact codes, but an infoframe or the scanned-out mode could not be read." : "";
+my $unread_text=($unread > 0) ? "$unread ".($unread == 1 ? "mode" : "modes")." could not be read back." : "";
+if(!grep { ($_->{status} || "") eq "pass" } @{$state{scenarios}}) {
+ my @why=grep { $_ ne "" } ($refused_text,$exact_text,$unread_text);
+ push(@why,"No mode could be verified.") if(!@why);
+ push(@why,"The Full Test also has 8-bit and 4:2:2 modes.") if($set eq "quick" && $refused);
+ &finish("unverified",join(" ",@why)." Your signal settings are back.");
+}
+&finish("passed",join(" ",($skipped ? "All provable modes are bit-exact." : $refused ? "Every possible mode is bit-exact." : "Every mode is bit-exact."),
+                          grep { $_ ne "" } ($exact_text,$unread_text,$refused_text))." Your signal settings are back.");
