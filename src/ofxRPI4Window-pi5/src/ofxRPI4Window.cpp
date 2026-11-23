@@ -3998,7 +3998,18 @@ void ofxRPI4Window::SetModeProperties()
 			} else {
 
 			updateDoVi_Infoframe(dv_status, dv_interface); // Disable DOVI infoframe if on, for some reason destroying blob doesn't clear the infoframe
-			updateHDR_Infoframe(ofxRPI4Window::eotf, 0); // Explicit EOTF=SDR DRM infoframe (kicks sinks out of latched HDR/DV modes)
+			/* SDR sends no DRM (HDR static metadata) infoframe, as
+			 * PGenerator 1.6 (its FlipPage calls updateHDR_Infoframe only
+			 * for HDR10/HLG) and the Pi 4 flavour. ResetConnectorProperties()
+			 * above set HDR_OUTPUT_METADATA to 0. In the Pi 5 kernel
+			 * (rpi-6.12.y vc4_hdmi.c) packets reach the hardware only when
+			 * the CRTC is enabled: post_crtc_disable leaves only the packet
+			 * RAM enable bit in HDMI_RAM_PACKET_CONFIG, post_crtc_enable
+			 * writes the infoframes whose state is set, and without a blob
+			 * the HDR one is not (drm_hdmi_state_helper.c
+			 * hdmi_generate_hdr_infoframe). The explicit EOTF=SDR blob set
+			 * here before put a DRM packet on the cable in SDR (the Signal
+			 * Self-Test's "HDR metadata: expect none"). */
 			struct avi_infoframe avi_infoframe;
 			avi_infoframe.colorimetry = avi_info.colorimetry; //Default
 			avi_infoframe.rgb_quant_range = avi_info.rgb_quant_range;  //Full range [0-255] = 2
@@ -4148,11 +4159,10 @@ void ofxRPI4Window::updateHDR_Infoframe(hdmi_eotf eotf, int idx)
 		 * helper was written; the renderer was the odd one out. */
 		struct drm_hdr_output_metadata meta = {};
 		if (static_cast<int>(eotf) <= 1) {
-			/* Explicit SDR / traditional-gamma DRM infoframe. Some
-			 * sinks latch their last HDR/Dolby Vision input mode when
-			 * the source simply stops sending infoframes; transmitting
-			 * an explicit EOTF=SDR forces them back to SDR. All
-			 * mastering metadata is zero (none for SDR). */
+			/* Traditional-gamma EOTF: all mastering metadata zero.
+			 * SetModeProperties() no longer calls this for SDR (SDR
+			 * sends no DRM infoframe, as 1.6); only an HDR mode whose
+			 * EOTF is 0 or 1 lands here. */
 			meta.metadata_type = HDMI_STATIC_METADATA_TYPE1;
 			meta.hdmi_metadata_type1.eotf = eotf;
 			meta.hdmi_metadata_type1.metadata_type = HDMI_STATIC_METADATA_TYPE1;
