@@ -293,8 +293,8 @@ int main(int argc, char **argv){
      tunnel computed exactly (ofxRPI4Window.cpp pg16_dovi_*_frag), except for
      a PiTPG client, which keeps PiTPG's arithmetic and parity embedding
      (maintainer, 2026-11-18). A full tunnel exists only in PiTPG sessions;
-     1.6 has none. A window flavour without the pg16 shaders (Pi 5) draws
-     with its own tunnel shader, which is not read back (TASKS.md). */
+     1.6 has none. Both window flavours have the pg16 shaders (pg16_shaders;
+     the Pi 5's since 2026-11-23, not read back there, TASKS.md). */
   ofxRPI4Window::dv_tunnel_pg16=(ofxRPI4Window::pg16_shaders && ofApp::dv_packet_form != dovi::form_pitpg && !ofApp::dv_full) ? 1 : 0;
   ofxRPI4Window::reloadConf=reloadSignalConf;
 

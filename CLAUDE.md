@@ -46,18 +46,15 @@ top priority, above any feature, in SDR, HDR10, HLG and Dolby Vision alike:
   next pair), with exactly 3072 metadata pixels (1.6's stray white one
   left out); PiTPG sessions keep PiTPG's arithmetic and parity embedding,
   also for a first draw without an apply. The Pi 5 renderer flavour has
-  no 1.6 tunnel (`pg16_shaders` 0): its shader packs `dovi::tunnelCodes`
-  (PiTPG's arithmetic) in every session, the same codes as 1.6 for 8-bit
-  colours inside 16..235, but 10- and 12-bit codes as they are (1.6 puts
-  them on its 8-bit grid) and codes outside 16..235 clamped to 16..4079
-  (1.6: no clamp); not decided, not read back
-  (`t/renderer_dv_shader_uniforms.t`). The
+  the same pg16 shaders, byte for byte (`pg16_shaders` 1, maintainer
+  2026-11-23; not read back on a Pi 5; its PiTPG-session image shader is
+  still its own). The
   WebUI's DV series codes, and every patch it sends, lie on 1.6's 8-bit
   grid whenever the cable
   carries that tunnel (`pg_dv_tunnel_pg16_grid`: Standard in the running
   renderer's start record when it runs in Dolby Vision, else the conf;
   no PiTPG packet, no full
-  tunnel, a Pi 4; the Patch Companion gets the same codes),
+  tunnel; the Patch Companion gets the same codes),
   so a run records the code sent and a grey's target
   follows it (maintainer, 2026-11-18); a colour's target stays its
   reference colour, as at 8 bits in SDR, and a custom greyscale profile

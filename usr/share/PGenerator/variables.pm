@@ -111,17 +111,16 @@ sub pg_dv_cable_interface(@) {
 # whose 8-bit grid carries a 10- or 12-bit code as int(code / max * 256)
 # (main.cpp dv_tunnel_pg16), by the settings on the cable (pg_dv_cable_conf;
 # $c: one already read): the transport is Standard, the packet is not a
-# PiTPG session's, the tunnel is not PiTPG's full-range one (dv_signal_range
-# 2), and the board is not a Pi 5 (its renderer flavour has no pg16
-# shaders, pg16_shaders 0).
+# PiTPG session's and the tunnel is not PiTPG's full-range one
+# (dv_signal_range 2). Both renderer flavours have that tunnel (pg16_shaders;
+# the Pi 5's since 2026-11-23): a Pi 5 gets its renderer only in its image,
+# with this code (pgenerator-update takes only a -pi5-bookworm-armhf
+# package there).
 sub pg_dv_tunnel_pg16_grid(@) {
  my $c=shift || &pg_dv_cable_conf();
  return 0 if(lc($c->{"dv_transport"} // "") eq "lldv");
  return 0 if(($c->{"dv_packet"} // "") eq "pitpg");
  return 0 if(($c->{"dv_signal_range"} // "") eq "2");
- my $model="";
- if(open(my $fh,"<",$proc_device_model)) { local $/; $model=<$fh> // ""; close($fh); }
- return 0 if($model=~/Raspberry Pi 5|Compute Module 5|BCM2712/i);
  return 1;
 }
 
