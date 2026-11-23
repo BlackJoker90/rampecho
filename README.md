@@ -165,7 +165,7 @@ mDNS answers AAAA queries with an NSEC record, so clients do not wait for an IPv
 
 ### 🧪 Signal self-test
 
-One button in **Output** runs thirteen signal modes (SDR RGB Limited/Full and YCbCr 4:2:2/4:4:4, HDR10 RGB Limited and YCbCr 4:2:2/4:4:4, SDR RGB Limited again straight after HDR10, HLG RGB Limited and YCbCr 4:4:4, Dolby Vision Standard and Low Latency).
+One button in **Output** runs thirteen signal modes (SDR RGB Limited/Full and YCbCr 4:2:2/4:4:4, HDR10 RGB Limited and YCbCr 4:2:2/4:4:4, SDR RGB Limited 8-bit again straight after HDR10, HLG RGB Limited and YCbCr 4:4:4, Dolby Vision Standard and Low Latency).
 
 <details>
 <summary>More detail</summary>

@@ -2249,81 +2249,37 @@ void ofxRPI4Window::dovi_pattern_shader()
 
 	)";
 
+	/* ofApp::shader_begin hands this shader the tunnel's codes as tunnel_ycc
+	 * since bbd116cf (2026-11-09). Up to then it set source_rgb and
+	 * source_max, which this shader still read, and coeffs_num/coeffs_div,
+	 * which pattern draws no longer get: nothing set them any more, so they
+	 * kept their link-time 0 (GLSL ES 3.10 4.3.5), and every Standard DV
+	 * window was drawn with Y 0 and Cb, Cr from 0/0, undefined (from the
+	 * code; not read back on a Pi 5, issue #37). Now the same shader as the
+	 * Pi 4 flavour's outside 1.6's tunnel, which this flavour does not have
+	 * (pg16_shaders). Outside PiTPG sessions the tunnel is limited
+	 * (dv_full 0), so a grey's Y is its code taken to 12 bits.
+	 * Against 1.6's tunnel computed exactly (dovi::pg16Codes): the same
+	 * codes for every 8-bit colour inside 16..235; 10- and 12-bit codes are
+	 * sent as they are, not on 1.6's 8-bit grid (657 of the 877 10-bit
+	 * greys 64..940 differ), and a channel outside 16..235 is clamped to
+	 * 16..4079 where 1.6 does not clamp (8-bit 0,0,0: Y 16, 1.6 Y 0). */
 	settings.shaderSources[GL_FRAGMENT_SHADER] = R"(
 		#version 310 es
 		precision highp float;
-		uniform vec4 globalColor;
-		uniform vec3 source_rgb;
-		uniform int source_max;
-	//	uniform int bits;
-	//	uniform int colorimetry;
-	//	uniform int color_format;
-	//	uniform int rgb_quant_range;
-	//	uniform int is_image;
-	//	uniform int is_std_DoVi;
-		uniform vec3 coeffs_num;
-		uniform vec3 coeffs_div;
-		uniform sampler2D tex0;
-		uniform vec2 resolution;
-		in vec2 texCoordVarying; 
+		precision highp int;
+		uniform ivec3 tunnel_ycc;
 		out vec4 outputColor;
 
-		int sourceCode12(float rawCode)
+		/* The tunnel's 12-bit Y, Cb, Cr come from the CPU (dovi::tunnelCodes,
+		 * PiTPG's double arithmetic, ofApp::shader_begin). Even x carries
+		 * Cb, odd x Cr; packed R = C[11:4], G = Y[11:4], B = C[3:0] Y[3:0]. */
+		void main()
 		{
-			int code = int(round(rawCode));
-			if (source_max == 4095)
-				return clamp(code, 0, 4095);
-			if (source_max == 1023)
-				return clamp(code, 0, 1023) << 2;
-			return clamp(code, 0, 255) << 4;
+			int Y = tunnel_ycc.x;
+			int C = mod(gl_FragCoord.x, 2.0) < 1.0 ? tunnel_ycc.y : tunnel_ycc.z;
+			outputColor = vec4(float(C >> 4) / 255.0, float(Y >> 4) / 255.0, float((Y & 15) | ((C & 15) << 4)) / 255.0, 1.0);
 		}
-
-		void main() 
-		{		
-			int srcR = sourceCode12(source_rgb.r);
-			int srcG = sourceCode12(source_rgb.g);
-			int srcB = sourceCode12(source_rgb.b);
-		//	float coeffs[5][3];
-		//	coeffs[0] = float[](0.2126, 0.7152, 0.0722); //BT709
-		//	coeffs[1] = float[](0.2627, 0.6780, 0.0593); //BT2020
-		//	coeffs[2] = float[](0.212630069, 0.715188177, 0.072181753);  //dovi BT709
-		//	coeffs[3] = float[](0.262710755, 0.6779981,	0.059291146); //dovi BT2020
-		//	coeffs[4] = float[](0.0, 0.0, 0.0); //dovi rgb2 coeff
-			float Y1, Y2, Cb, Cr, a;
-			int R1, G1, B1, R2, G2, B2;
-	
-				/* YCrCb422 matrix */
-				Y1 = round(coeffs_num.x * float(srcR) + coeffs_num.y * float(srcG) + coeffs_num.z * float(srcB));
-				Cb = round((((-coeffs_num.x/coeffs_div.x) * float(srcR) - (coeffs_num.y/coeffs_div.x) * float(srcG) + coeffs_div.z * float(srcB)) * 2.0 * 224.0/219.0)/2.0 + 2048.0); // Chrominance Blue
-				Y2 = Y1;
-				Cr = round(((coeffs_div.z * float(srcR) - (coeffs_num.y/coeffs_div.y) * float(srcG) - (coeffs_num.z/coeffs_div.y) * float(srcB)) * 2.0 * 224.0/219.0)/2.0 + 2048.0); // Chrominance Red
-				a = 1.0;
-				/* Pack YUV for tunneling -- to do?? */
-			
-
-				/* Pack Dolby As RGB */
-				int Y1Code = clamp(int(Y1), 0, 4095);
-				int Y2Code = clamp(int(Y2), 0, 4095);
-				int CbCode = clamp(int(Cb), 0, 4095);
-				int CrCode = clamp(int(Cr), 0, 4095);
-				R1 = CbCode >> 4;  
-				G1 = Y1Code >> 4;
-				B1 = (Y1Code & 15) | ((CbCode & 15) << 4);
-				R2 = CrCode >> 4;  
-				G2 = Y2Code >> 4;
-				B2 = (Y2Code & 15) | ((CrCode & 15) << 4);	
-				
-				//even
-				if(mod(gl_FragCoord.x,2.0)<1.0) {
-	
-					outputColor =  vec4(float(R1)/255.0,float(G1)/255.0, float(B1)/255.0,a); 
-
-				// odd
-				} else {
-
-					outputColor =  vec4(float(R2)/255.0,float(G2)/255.0, float(B2)/255.0,a); 
-				}
-		} 
 	)";
 		
 	

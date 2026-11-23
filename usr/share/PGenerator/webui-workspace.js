@@ -21868,7 +21868,17 @@ function pgInitialRetry(name,fn,delays){
   function drawRing() {
     if (!ring) return;
     var st = (typeof selftestState !== 'undefined' && selftestState) || {}, res = {};
-    (Array.isArray(st.scenarios) ? st.scenarios : []).forEach(function (r) { if (r) res[r.id] = RS[r.status] ? r.status : 'pending'; });
+    // The run's modes as the page's list takes them (selftestRuns: objects with a word id, each id once).
+    var runs = typeof selftestRuns === 'function' ? selftestRuns(st) : (Array.isArray(st.scenarios) ? st.scenarios : []), known = {};
+    MODES.forEach(function (m) { known[m.id] = 1; });
+    runs.forEach(function (r) { if (r && !res[r.id]) res[r.id] = RS[r.status] ? r.status : 'pending'; });
+    // A result saved before an update renamed its mode (Back to SDR was 10-bit up to 3.0.6-pi5-experimental) counts for
+    // the mode of its group in that run's set that has no result of its own, as the page's list shows it under the run's own name.
+    runs.forEach(function (r) {
+      if (!r || known[r.id] || !RS[r.status] || typeof r.group !== 'string') return;
+      var m = MODES.filter(function (x) { return x.group === r.group && !res[x.id] && (st.set !== 'quick' || x.quick); })[0];
+      if (m) res[m.id] = r.status;
+    });
     var stat = MODES.map(function (m) { return res[m.id] || 'pending'; });
     // The page marks a result of another output resolution (selftestMarkStale): the ring must not show it as proven.
     var stale = $('selftestVerdict').hasAttribute('data-stale');

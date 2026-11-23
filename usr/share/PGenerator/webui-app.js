@@ -4290,7 +4290,7 @@ const SELFTEST_MODES=[
  {id:'hdr10_rgb_lim_10',group:'HDR10',label:'RGB Limited',depth:10,quick:false},
  {id:'hdr10_ycc422_10',group:'HDR10',label:'YCbCr 4:2:2',depth:10,quick:false},
  {id:'hdr10_ycc444_10',group:'HDR10',label:'YCbCr 4:4:4',depth:10,quick:true},
- {id:'sdr_after_hdr_rgb_lim_10',group:'Back to SDR',label:'RGB Limited',depth:10,quick:true},
+ {id:'sdr_after_hdr_rgb_lim_8',group:'Back to SDR',label:'RGB Limited',depth:8,quick:true},
  {id:'hlg_rgb_lim_10',group:'HLG',label:'RGB Limited',depth:10,quick:false},
  {id:'hlg_ycc444_10',group:'HLG',label:'YCbCr 4:4:4',depth:10,quick:false},
  {id:'dv_std_rgb_8',group:'Dolby Vision',label:'Standard',depth:8,quick:false},
@@ -4340,7 +4340,7 @@ function selftestModeRow(mode,result,running){
  const chans=' <span class="selftest-chans">'+(/4:4:4/.test(fmt)?'Cb Cr Y':/4:2:2/.test(fmt)?'Y Cb Cr':'R G B')+'</span>';
  const strip=windows.length?windows.map(c=>'<span class="selftest-swatch'+(c.ok?'':' is-off')+'" style="background:'+selftestSwatchColor(c.swatch)+'" title="'+pgHtmlEsc(c.label+': '+(c.ok?'exact':'expected '+c.expect+', read '+c.got))+'"></span>').join('')
   :'';
- const score=r.total?r.passed+'/'+r.total:'';
+ const score=r.total?pgHtmlEsc(r.passed+'/'+r.total):'';
  const rows=(r.checks||[]).map(c=>'<tr class="'+(c.ok?'':'is-off')+'"><th scope="row">'+(c.swatch?'<span class="selftest-swatch" style="background:'+selftestSwatchColor(c.swatch)+'"></span>':'')+pgHtmlEsc(c.label)+'</th><td>'+pgHtmlEsc(c.expect)+'</td><td>'+pgHtmlEsc(c.got)+'</td><td class="selftest-cell-state">'+(c.ok?(c.swatch?'Exact':'Match'):(c.info?'Not verified':'Mismatch'))+'</td></tr>').join('');
  const detail=(r.checks||[]).length?
   '<div class="selftest-detail" id="selftestDetail_'+mode.id+'"'+(open?'':' hidden')+'>'+
@@ -4353,11 +4353,23 @@ function selftestModeRow(mode,result,running){
    '<span class="selftest-mode-link">'+pgHtmlEsc(r.note||selftestLinkText(r.link))+'</span>'+
    '<span class="selftest-strip" aria-hidden="true">'+strip+'</span>'+
    '<span class="selftest-score">'+score+'</span>'+
-   '<span class="selftest-state"><span class="selftest-dot" aria-hidden="true"></span>'+(SELFTEST_STATUS_TEXT[status]||status).replace(/-/g,'\u2011')+'</span>'+
+   '<span class="selftest-state"><span class="selftest-dot" aria-hidden="true"></span>'+pgHtmlEsc(SELFTEST_STATUS_TEXT[status]||status).replace(/-/g,'\u2011')+'</span>'+
   '</button>'+detail+'</li>';
 }
+// The modes a run's state lists, as the page takes them: objects with a word
+// id, each id once (its first entry). The list, its counts, the copied report
+// and the Glow ring all read the state through this.
+function selftestRuns(st){
+ const seen={};
+ return (st&&Array.isArray(st.scenarios)?st.scenarios:[]).filter(r=>{
+  if(!r||typeof r!=='object'||typeof r.id!=='string'||!/^\w+$/.test(r.id)||seen[r.id]) return false;
+  seen[r.id]=1;
+  return true;
+ });
+}
 function selftestRender(st){
- selftestState=st||{state:'idle'};
+ selftestState=Object.assign({},st||{state:'idle'});
+ selftestState.scenarios=selftestRuns(selftestState);
  const card=document.getElementById('selftestCard');
  if(!card) return;
  const state=selftestState.state||'idle';
@@ -4366,12 +4378,17 @@ function selftestRender(st){
  const title=document.getElementById('selftestTitle');
  const sub=document.getElementById('selftestSub');
  const results={};
- (selftestState.scenarios||[]).forEach(r=>{ results[r.id]=r; });
+ selftestState.scenarios.forEach(r=>{ results[r.id]=r; });
  const set=selftestState.set||'full';
  // A run lists its own modes (every one, pending ones too): a result saved
- // before an update that added a mode does not show that mode as waiting.
- const ran=(selftestState.scenarios||[]).length>0;
- const modes=SELFTEST_MODES.filter(m=>ran?!!results[m.id]:(state==='idle'||set==='full'||m.quick));
+ // before an update that added a mode does not show that mode as waiting,
+ // and one whose mode the update renamed keeps its row, under the group,
+ // label and depth the run wrote (Back to SDR was 10-bit up to
+ // 3.0.6-pi5-experimental).
+ const ran=selftestState.scenarios.length>0;
+ const modes=ran?selftestState.scenarios
+   .map(r=>SELFTEST_MODES.find(m=>m.id===r.id)||{id:r.id,group:String(r.group||''),label:String(r.label||r.id),depth:parseInt(r.depth,10)||''})
+  :SELFTEST_MODES.filter(m=>state==='idle'||set==='full'||m.quick);
  const passed=modes.filter(m=>results[m.id]&&results[m.id].status==='pass').length;
  const failedModes=modes.filter(m=>results[m.id]&&results[m.id].status==='fail');
  // A run with no mode bit-exact proved nothing (pgen_selftest.pl ends it as
@@ -4479,10 +4496,10 @@ async function selftestCancel(){
 }
 async function selftestCopyReport(){
  const st=selftestState;
- if(!st||!st.scenarios) return;
+ if(!st||!Array.isArray(st.scenarios)) return;
  const ver=(document.getElementById('verDisplay')||{}).textContent||'';
  const lines=['rampecho '+ver+' signal self-test: '+(st.state||'')+(st.resolution?' at '+st.resolution:'')+(st.finished?' ('+new Date(st.finished*1000).toISOString()+')':''),st.message||''];
- st.scenarios.forEach(r=>{
+ selftestRuns(st).forEach(r=>{
   lines.push('');
   lines.push(r.group+' '+r.label+' '+r.depth+'-bit: '+(SELFTEST_STATUS_TEXT[r.status]||r.status)+(r.total?' '+r.passed+'/'+r.total:''));
   if(r.note) lines.push('  '+r.note);

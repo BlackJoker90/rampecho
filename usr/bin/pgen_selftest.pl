@@ -82,9 +82,14 @@ my @scenarios=(
  # DRM infoframe read on the output right before it (HDR10 refused by the
  # display, its switch failed, or it sent none) it proves nothing and is not
  # run. HLG -> Dolby Vision stays the Full Test's other switch out of HDR.
- { id=>"sdr_after_hdr_rgb_lim_10", group=>"Back to SDR", label=>"RGB Limited", depth=>10,
-   config=>{signal_mode=>"sdr",color_format=>"0",max_bpc=>"10",rgb_quant_range=>"1"},
-   range=>"LIMITED", codes=>[@grey10], after_hdr=>1 },
+ # 8-bit RGB, the SDR mode every timing up to 3840x2160 at 60 Hz carries
+ # (594 MHz): at 4K50/60 10-bit RGB needs 742.5 MHz, more than the 600 MHz
+ # of a Pi 4 or Pi 5 (PGSignalCheck), so as 10-bit it would be refused
+ # wherever HDR10 4:2:2 before it runs. Seen on a Pi 5 at 4K60 before this
+ # mode existed (issue #37, 3.0.4): 10-bit RGB refused, HDR10 4:2:2 accepted.
+ { id=>"sdr_after_hdr_rgb_lim_8", group=>"Back to SDR", label=>"RGB Limited", depth=>8,
+   config=>{signal_mode=>"sdr",color_format=>"0",max_bpc=>"8",rgb_quant_range=>"1"},
+   range=>"LIMITED", codes8=>[["Black",16,16,16],["Grey 50 %",126,126,126],["Grey 75 %",180,180,180],["White",235,235,235]], after_hdr=>1 },
  { id=>"hlg_rgb_lim_10", group=>"HLG", label=>"RGB Limited", depth=>10,
    config=>{signal_mode=>"hlg",color_format=>"0",max_bpc=>"10",rgb_quant_range=>"1"},
    range=>"LIMITED", codes=>[@grey10,["Red 75 %",721,64,64]], drm=>1 },
@@ -104,7 +109,7 @@ my @scenarios=(
    config=>{signal_mode=>"dv",dv_transport=>"lldv"},
    codes=>[@grey10], codes8=>[@grey8] },
 );
-@scenarios=grep { $_->{id}=~/^(sdr_rgb_lim_10|sdr_ycc444_10|hdr10_ycc444_10|sdr_after_hdr_rgb_lim_10)$/ } @scenarios if($set eq "quick");
+@scenarios=grep { $_->{id}=~/^(sdr_rgb_lim_10|sdr_ycc444_10|hdr10_ycc444_10|sdr_after_hdr_rgb_lim_8)$/ } @scenarios if($set eq "quick");
 
 my %state=(
  state=>"running", message=>"Preparing the self-test.", set=>$set, pid=>$$,
@@ -514,10 +519,11 @@ sub expected_fb {
  # 4095) lands on the 8-bit grid, 502 -> 2000; a grey is Cb=Cr=2048. Each
  # pixel carries R=C>>4, G=Y>>4, B=(Y&15)|((C&15)<<4) in an 8-bit unorm, so
  # a grey reads 128, Y>>4, Y&15, and Y 4096 (code max) reads G=255 B=0.
- # The Pi 5 renderer flavour has no 1.6 tunnel (pg16_shaders 0): it keeps
- # the expectation it had before, the code taken to 12 bits as it is. Its
- # own tunnel shader is not read back on a Pi 5 (it reads a source_rgb
- # uniform the pattern code never sets; TASKS.md).
+ # The Pi 5 renderer flavour has no 1.6 tunnel (pg16_shaders 0): its
+ # shader packs dovi::tunnelCodes, PiTPG's arithmetic, in a limited tunnel
+ # outside PiTPG sessions (dv_full 0). For a limited-range grey that is
+ # Y = 3504 (code - 16 << n-8) / (219 << n-8) + 256, the code taken to 12
+ # bits exactly (t/selftest_dv_tunnel_range.t). Not read back on a Pi 5.
  if($sc->{tunnel}) {
   my $y;
   if(board_is_pi5()) {
