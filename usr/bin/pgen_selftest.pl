@@ -109,7 +109,10 @@ my @scenarios=(
    config=>{signal_mode=>"dv",dv_transport=>"lldv"},
    codes=>[@grey10], codes8=>[@grey8] },
 );
-@scenarios=grep { $_->{id}=~/^(sdr_rgb_lim_10|sdr_ycc444_10|hdr10_ycc444_10|sdr_after_hdr_rgb_lim_8)$/ } @scenarios if($set eq "quick");
+# The Quick Check: HDR10 in 4:2:2 and 4:4:4, so that at 3840x2160 50/60 Hz,
+# where the 10-bit RGB and 4:4:4 modes need 742.5 MHz and are refused, HDR10
+# 4:2:2 (594 MHz) and back to SDR still run (maintainer 2026-11-23).
+@scenarios=grep { $_->{id}=~/^(sdr_rgb_lim_10|sdr_ycc444_10|hdr10_ycc422_10|hdr10_ycc444_10|sdr_after_hdr_rgb_lim_8)$/ } @scenarios if($set eq "quick");
 
 my %state=(
  state=>"running", message=>"Preparing the self-test.", set=>$set, pid=>$$,
@@ -965,7 +968,11 @@ my $no_hdr_text=$no_hdr ? "$no_hdr ".($no_hdr == 1 ? "mode was" : "modes were").
 if(!grep { ($_->{status} || "") eq "pass" } @{$state{scenarios}}) {
  my @why=grep { $_ ne "" } ($refused_text,$exact_text,$unread_text,$no_hdr_text);
  push(@why,"No mode could be verified.") if(!@why);
- push(@why,"The Full Test also has 8-bit and 4:2:2 modes.") if($set eq "quick" && $refused);
+ # Only when refusals left nothing to run: a mode that ran but could not be
+ # read (a Pi 5 logs no AVI) would end the same way in the Full Test. The
+ # Quick Check has an 8-bit and a 4:2:2 mode itself, so name the Full
+ # Test's own.
+ push(@why,"The Full Test also has SDR in 8-bit RGB and in YCbCr 4:2:2.") if($set eq "quick" && $refused && !$skipped);
  &finish("unverified",join(" ",@why)." Your signal settings are back.");
 }
 &finish("passed",join(" ",(($skipped || $no_hdr) ? "All provable modes are bit-exact." : $refused ? "Every possible mode is bit-exact." : "Every mode is bit-exact."),

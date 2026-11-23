@@ -4288,7 +4288,7 @@ const SELFTEST_MODES=[
  {id:'sdr_ycc422_10',group:'SDR',label:'YCbCr 4:2:2',depth:10,quick:false},
  {id:'sdr_ycc444_10',group:'SDR',label:'YCbCr 4:4:4',depth:10,quick:true},
  {id:'hdr10_rgb_lim_10',group:'HDR10',label:'RGB Limited',depth:10,quick:false},
- {id:'hdr10_ycc422_10',group:'HDR10',label:'YCbCr 4:2:2',depth:10,quick:false},
+ {id:'hdr10_ycc422_10',group:'HDR10',label:'YCbCr 4:2:2',depth:10,quick:true},
  {id:'hdr10_ycc444_10',group:'HDR10',label:'YCbCr 4:4:4',depth:10,quick:true},
  {id:'sdr_after_hdr_rgb_lim_8',group:'Back to SDR',label:'RGB Limited',depth:8,quick:true},
  {id:'hlg_rgb_lim_10',group:'HLG',label:'RGB Limited',depth:10,quick:false},
@@ -4463,7 +4463,7 @@ function selftestMarkStale(){
 function selftestSubText(st){
  st=st||{};
  if(st.state==='passed'&&!(st.scenarios||[]).some(r=>r&&r.status==='pass')) return 'No mode was proven bit-exact in this run.';
- return st.message||'Full Test: 13 modes, about 3 min. Quick Check: 4 modes, about 1 min. Needs a display and no calibration software attached.';
+ return st.message||'Full Test: 13 modes, about 3 min. Quick Check: 5 modes, about 1 min. Needs a display and no calibration software attached.';
 }
 function selftestPoll(delay){
  if(selftestPollTimer) clearTimeout(selftestPollTimer);
@@ -4479,7 +4479,7 @@ function selftestPoll(delay){
 async function selftestStart(set){
  const quick=set==='quick';
  const ok=await pgConfirm({title:quick?'Run a quick check?':'Run the full self-test?',
-  body:(quick?'4 modes, about 1 minute.':'13 modes, about 3 minutes.')+' The display switches through SDR'+(quick?', HDR10 and back to SDR':', HDR10, back to SDR, HLG and Dolby Vision')+' and shows dim test windows. Calibration software must stay disconnected until it finishes. Your signal settings come back afterwards.'+(hasUnsavedSettings()?' Unapplied changes are not part of the test.':''),
+  body:(quick?'5 modes, about 1 minute.':'13 modes, about 3 minutes.')+' The display switches through SDR'+(quick?', HDR10 and back to SDR':', HDR10, back to SDR, HLG and Dolby Vision')+' and shows dim test windows. Calibration software must stay disconnected until it finishes. Your signal settings come back afterwards.'+(hasUnsavedSettings()?' Unapplied changes are not part of the test.':''),
   acceptLabel:quick?'Run Quick Check':'Run Full Test',tone:'caution'});
  if(!ok) return;
  selftestOpen={};
@@ -24791,7 +24791,7 @@ function pgPaletteActions(){
   {title:'Discard changes',hint:'Back to the settings the generator runs now',when:dirty,run:()=>discardSettings()},
   {title:'Save as preset',hint:'Store the current signal settings under a name',when:typeof pgPresetSavePrompt==='function',run:()=>pgPresetSavePrompt()},
   {title:'Run full self-test',hint:'Read back every signal mode at the HDMI output',when:!!document.getElementById('selftestRunBtn'),run:()=>{ pgPaletteReveal(document.getElementById('selftestCard')); selftestStart('full'); }},
-  {title:'Run quick check',hint:'4 modes, about 1 minute',when:!!document.getElementById('selftestQuickBtn'),run:()=>{ pgPaletteReveal(document.getElementById('selftestCard')); selftestStart('quick'); }},
+  {title:'Run quick check',hint:'5 modes, about 1 minute',when:!!document.getElementById('selftestQuickBtn'),run:()=>{ pgPaletteReveal(document.getElementById('selftestCard')); selftestStart('quick'); }},
   {title:'Reset display settings to defaults',hint:'Asks first; nothing changes until Apply',when:typeof resetDefaults==='function',run:()=>resetDefaults()},
   {title:'Keyboard shortcuts',hint:'Show every shortcut',kbd:'?',when:true,run:()=>pgPaletteOpen('help')}
  ];
