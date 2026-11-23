@@ -302,11 +302,14 @@ compresses with xz, copies the `.img.xz` and `_sha256.txt` to
   watcher matches its own command line and never ends). `t/` runs there
   as root on Linux: a test that needs macOS or a non-root user skips
   there, it does not fail. The VM has no headless Chrome or Playwright,
-  no clang and no expect: run-in-vm.sh (and run-in-vm-pi5.sh) accept
-  exactly those skip reasons (`VM_SKIP_REASONS`, passed as
-  `PGEN_ALLOW_SKIPPED_REASONS`), so the build goes on and the log lists
-  those files under "Warning: tests skipped parts this machine cannot
-  run"; the Mac's release gate runs them. Any other skip stops the
+  no clang and no expect, and cannot run the macOS-only tests:
+  run-in-vm.sh and run-in-vm-pi5.sh accept exactly those skip reasons
+  (`VM_SKIP_REASONS`, the same value in both, `t/release_order.t`;
+  passed as `PGEN_ALLOW_SKIPPED_REASONS`), so the build goes on and the
+  log lists those files under "Warning: tests skipped parts this machine
+  cannot run"; the Mac's release gate runs them. The tests that need
+  SDL3 headers or numpy run there (`libsdl3-dev`, `python3-numpy` in the
+  VM since 2026-11-23). Any other skip stops the
   build (an inherited `PGEN_ALLOW_SKIPPED=1`,
   `PGEN_RELEASE_PREFLIGHT_DONE=1` or `PGEN_SKIP_RELEASE_CHECKS=1` is
   dropped there: an image built by these scripts always runs the checks).
