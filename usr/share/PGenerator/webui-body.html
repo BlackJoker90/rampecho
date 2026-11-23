@@ -356,7 +356,7 @@ __PG_LOGO_DARK__
  <!-- Signal Self-Test (Output, below Display Settings): pgen_selftest.pl walks the output through the signal
       modes and reads back the scanned-out codes (webui-app.js selftest*). -->
  <div class="card span2 selftest-card" id="selftestCard" data-widget="selftest" data-desktop-workspace="output" data-desktop-order="35" draggable="true">
-  <h2 aria-labelledby="selftestHeading"><span class="drag-handle"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></span><span id="selftestHeading">Signal Self-Test</span> <span class="meter-help-tip" id="selftestHelp" aria-label="About the signal self-test" title="Draws known codes in every signal mode and reads them back from the scanout. It checks the link too: link depth, range conversion and the AVI infoframe.&#10;&#10;The Full Test takes about 3 minutes, the Quick Check about 40 seconds, with dim test windows on the display. Your signal settings are restored afterwards.&#10;&#10;Not an HDMI analyzer: it reads inside the Pi, so it proves what the Pi sends, not what the display receives. The same holds for the &ldquo;Sent&rdquo; lines in the signal settings.">?</span></h2>
+  <h2 aria-labelledby="selftestHeading"><span class="drag-handle"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></span><span id="selftestHeading">Signal Self-Test</span> <span class="meter-help-tip" id="selftestHelp" aria-label="About the signal self-test" title="Draws known codes in every signal mode and reads them back from the scanout. It checks the link too: link depth, range conversion and the AVI infoframe.&#10;&#10;The Full Test takes about 3 minutes, the Quick Check about 1 minute, with dim test windows on the display. Your signal settings are restored afterwards.&#10;&#10;Not an HDMI analyzer: it reads inside the Pi, so it proves what the Pi sends, not what the display receives. The same holds for the &ldquo;Sent&rdquo; lines in the signal settings.">?</span></h2>
   <div class="selftest-verdict" id="selftestVerdict" data-state="idle">
    <span class="selftest-mark" aria-hidden="true">
     <svg class="selftest-mark-icon" data-icon="idle" viewBox="0 0 24 24"><path d="M3 12h3l2.5-6 4 12 3-9 2 3H21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -366,7 +366,7 @@ __PG_LOGO_DARK__
    </span>
    <div class="selftest-verdict-text" role="status" aria-live="polite">
     <div class="selftest-title" id="selftestTitle">Not run yet</div>
-    <div class="selftest-sub" id="selftestSub">Full&nbsp;Test: 12 modes, about&nbsp;3&nbsp;min. Quick&nbsp;Check: 3 modes, about&nbsp;40&nbsp;s. Needs a display and no calibration software attached.</div>
+    <div class="selftest-sub" id="selftestSub">Full&nbsp;Test: 13 modes, about&nbsp;3&nbsp;min. Quick&nbsp;Check: 4 modes, about&nbsp;1&nbsp;min. Needs a display and no calibration software attached.</div>
    </div>
    <div class="selftest-actions">
     <button type="button" class="btn btn-secondary" id="selftestQuickBtn" onclick="selftestStart('quick')">Run Quick Check</button>

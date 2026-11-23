@@ -845,7 +845,7 @@
       "kind": "card",
       "refersTo": "card",
       "description": "One soft panel per section, no border, title in the headline size.",
-      "html": "<section class=\"ds-card\"><h2>Signal Self-Test</h2><p>Draws known codes in twelve signal modes and reads the pixels back.</p></section>",
+      "html": "<section class=\"ds-card\"><h2>Signal Self-Test</h2><p>Draws known codes in thirteen signal modes and reads the pixels back.</p></section>",
       "css": ".ds-card{width:320px;padding:22px 24px 24px;border-radius:22px;background:var(--surface-card,#141416);font-family:var(--meso, 'PGen Mesopic', 'Avenir Next', 'Segoe UI', system-ui, sans-serif);color:var(--text-secondary,#a2a2a8)}.ds-card h2{margin:0 0 18px;font-size:1.1875rem;font-weight:700;line-height:1.2;letter-spacing:-.01em;color:var(--meso-lit,#e4e4e8)}.ds-card p{margin:0;font-size:.875rem;line-height:1.45}"
     },
     {

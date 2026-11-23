@@ -77,6 +77,14 @@ my @scenarios=(
  { id=>"hdr10_ycc444_10", group=>"HDR10", label=>"YCbCr 4:4:4", depth=>10,
    config=>{signal_mode=>"hdr10",color_format=>"1",max_bpc=>"10",rgb_quant_range=>"1"},
    codes=>[@grey10,@colour10], codes8=>[@grey8,@colour8], codes12=>[@grey12], drm=>1 },
+ # SDR straight after HDR10 (both sets): the HDR (DRM) infoframe must be
+ # gone again, not only absent in an SDR mode the run started in. Without a
+ # DRM infoframe read on the output right before it (HDR10 refused by the
+ # display, its switch failed, or it sent none) it proves nothing and is not
+ # run. HLG -> Dolby Vision stays the Full Test's other switch out of HDR.
+ { id=>"sdr_after_hdr_rgb_lim_10", group=>"Back to SDR", label=>"RGB Limited", depth=>10,
+   config=>{signal_mode=>"sdr",color_format=>"0",max_bpc=>"10",rgb_quant_range=>"1"},
+   range=>"LIMITED", codes=>[@grey10], after_hdr=>1 },
  { id=>"hlg_rgb_lim_10", group=>"HLG", label=>"RGB Limited", depth=>10,
    config=>{signal_mode=>"hlg",color_format=>"0",max_bpc=>"10",rgb_quant_range=>"1"},
    range=>"LIMITED", codes=>[@grey10,["Red 75 %",721,64,64]], drm=>1 },
@@ -96,7 +104,7 @@ my @scenarios=(
    config=>{signal_mode=>"dv",dv_transport=>"lldv"},
    codes=>[@grey10], codes8=>[@grey8] },
 );
-@scenarios=grep { $_->{id}=~/^(sdr_rgb_lim_10|sdr_ycc444_10|hdr10_ycc444_10)$/ } @scenarios if($set eq "quick");
+@scenarios=grep { $_->{id}=~/^(sdr_rgb_lim_10|sdr_ycc444_10|hdr10_ycc444_10|sdr_after_hdr_rgb_lim_10)$/ } @scenarios if($set eq "quick");
 
 my %state=(
  state=>"running", message=>"Preparing the self-test.", set=>$set, pid=>$$,
@@ -658,6 +666,12 @@ if(!&save_user_state()) {
 my $failed=0;
 my $skipped=0;
 my $refused=0;
+# Modes that test the switch back from HDR without HDR before them.
+my $no_hdr=0;
+# A DRM infoframe was read on the output the last switch left (0 when none
+# was read or the switch failed; a refused switch leaves the output, and
+# this, as it was).
+my $hdr_read=0;
 # Of the skipped: modes whose codes were read back bit-exact, where only an
 # infoframe or the scanned-out mode could not be read.
 my $codes_exact=0;
@@ -668,6 +682,13 @@ for(my $n=0;$n<@scenarios;$n++) {
  if(my $sw=&calibration_busy()) {
   &finish("error","$sw connected during the test, so the self-test stopped and gave the output back.");
  }
+ if($sc->{after_hdr} && !$hdr_read) {
+  $entry->{status}="skip"; $entry->{no_hdr_before}=1; $no_hdr++;
+  $entry->{note}="Not run: no HDR infoframe was read right before it.";
+  $state{step}+=1+&window_count($sc);
+  &write_state();
+  next;
+ }
  $entry->{status}="running";
  $state{current}="$sc->{group} $sc->{label}";
  $state{message}="Switching to $sc->{group} $sc->{label}, ".($sc->{depth})."-bit.";
@@ -675,6 +696,7 @@ for(my $n=0;$n<@scenarios;$n++) {
 
  my ($err,$refusal)=&apply_config($sc->{config});
  $state{step}++;
+ $hdr_read=0 if(!$refusal);
  if($refusal) {
   $entry->{status}="skip"; $entry->{refused}=1; $entry->{note}="Not possible here: $refusal"; $refused++;
   $state{step}+=&window_count($sc);
@@ -785,6 +807,7 @@ for(my $n=0;$n<@scenarios;$n++) {
   $entry->{unverified}=1;
  } elsif($sc->{drm}) {
   add_check($entry,"HDR metadata","DRM infoframe",$drm_on ? "DRM infoframe" : "none",$drm_on);
+  $hdr_read=$drm_on ? 1 : 0;
  } else {
   add_check($entry,"HDR metadata","none",$drm_on ? "DRM infoframe" : "none",!$drm_on);
  }
@@ -932,11 +955,12 @@ my $unread=$skipped-$codes_exact;
 my $refused_text=$refused ? "$refused ".($refused == 1 ? "mode is" : "modes are")." not possible with this display and resolution." : "";
 my $exact_text=$codes_exact ? "$codes_exact ".($codes_exact == 1 ? "mode has" : "modes have")." bit-exact codes, but an infoframe or the scanned-out mode could not be read." : "";
 my $unread_text=($unread > 0) ? "$unread ".($unread == 1 ? "mode" : "modes")." could not be read back." : "";
+my $no_hdr_text=$no_hdr ? "$no_hdr ".($no_hdr == 1 ? "mode was" : "modes were")." not run: no HDR infoframe was read right before ".($no_hdr == 1 ? "it" : "them").", so the switch back from HDR is not tested." : "";
 if(!grep { ($_->{status} || "") eq "pass" } @{$state{scenarios}}) {
- my @why=grep { $_ ne "" } ($refused_text,$exact_text,$unread_text);
+ my @why=grep { $_ ne "" } ($refused_text,$exact_text,$unread_text,$no_hdr_text);
  push(@why,"No mode could be verified.") if(!@why);
  push(@why,"The Full Test also has 8-bit and 4:2:2 modes.") if($set eq "quick" && $refused);
  &finish("unverified",join(" ",@why)." Your signal settings are back.");
 }
-&finish("passed",join(" ",($skipped ? "All provable modes are bit-exact." : $refused ? "Every possible mode is bit-exact." : "Every mode is bit-exact."),
-                          grep { $_ ne "" } ($exact_text,$unread_text,$refused_text))." Your signal settings are back.");
+&finish("passed",join(" ",(($skipped || $no_hdr) ? "All provable modes are bit-exact." : $refused ? "Every possible mode is bit-exact." : "Every mode is bit-exact."),
+                          grep { $_ ne "" } ($exact_text,$unread_text,$refused_text,$no_hdr_text))." Your signal settings are back.");

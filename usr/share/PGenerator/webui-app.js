@@ -4290,11 +4290,17 @@ const SELFTEST_MODES=[
  {id:'hdr10_rgb_lim_10',group:'HDR10',label:'RGB Limited',depth:10,quick:false},
  {id:'hdr10_ycc422_10',group:'HDR10',label:'YCbCr 4:2:2',depth:10,quick:false},
  {id:'hdr10_ycc444_10',group:'HDR10',label:'YCbCr 4:4:4',depth:10,quick:true},
+ {id:'sdr_after_hdr_rgb_lim_10',group:'Back to SDR',label:'RGB Limited',depth:10,quick:true},
  {id:'hlg_rgb_lim_10',group:'HLG',label:'RGB Limited',depth:10,quick:false},
  {id:'hlg_ycc444_10',group:'HLG',label:'YCbCr 4:4:4',depth:10,quick:false},
  {id:'dv_std_rgb_8',group:'Dolby Vision',label:'Standard',depth:8,quick:false},
  {id:'lldv_ycc422_12',group:'Dolby Vision',label:'Low Latency',depth:12,quick:false}
 ];
+// Chip colour per group (grey SDR, orange HDR, violet DV) and the short
+// name narrow cards show so the state still fits on the first line: no
+// wider than "HDR10", whose chip sets the shared column's width there.
+const SELFTEST_GROUP_KEY={'SDR':'sdr','HDR10':'hdr','HLG':'hdr','Back to SDR':'sdr','Dolby Vision':'dv'};
+const SELFTEST_GROUP_SHORT={'Dolby Vision':'DV','Back to SDR':'\u2192SDR'};
 const SELFTEST_STATUS_TEXT={pending:'Waiting',running:'Testing',pass:'Bit-exact',fail:'Mismatch',skip:'Not provable'};
 let selftestState=null;
 let selftestPollTimer=null;
@@ -4325,9 +4331,9 @@ function selftestModeRow(mode,result,running){
  const r=result||{status:'pending',checks:[],passed:0,total:0};
  const status=r.status||'pending';
  const windows=(r.checks||[]).filter(c=>c.swatch);
- const groupKey=mode.group==='SDR'?'sdr':(mode.group==='HDR10'||mode.group==='HLG')?'hdr':'dv';
- // Narrow cards show "DV" so the state still fits on the first line.
- const groupLabel=groupKey==='dv'?'<span class="selftest-group-long">'+pgHtmlEsc(mode.group)+'</span><span class="selftest-group-short" aria-hidden="true">DV</span>':pgHtmlEsc(mode.group);
+ const groupKey=SELFTEST_GROUP_KEY[mode.group]||'sdr';
+ const short=SELFTEST_GROUP_SHORT[mode.group];
+ const groupLabel=short?'<span class="selftest-group-long">'+pgHtmlEsc(mode.group)+'</span><span class="selftest-group-short" aria-hidden="true">'+pgHtmlEsc(short)+'</span>':pgHtmlEsc(mode.group);
  const open=!!selftestOpen[mode.id]&&(r.checks||[]).length>0;
  // Framebuffer channel order as the renderer stores it.
  const fmt=(r.link&&r.link.format)||'';
@@ -4362,7 +4368,10 @@ function selftestRender(st){
  const results={};
  (selftestState.scenarios||[]).forEach(r=>{ results[r.id]=r; });
  const set=selftestState.set||'full';
- const modes=SELFTEST_MODES.filter(m=>state==='idle'||set==='full'||m.quick||results[m.id]);
+ // A run lists its own modes (every one, pending ones too): a result saved
+ // before an update that added a mode does not show that mode as waiting.
+ const ran=(selftestState.scenarios||[]).length>0;
+ const modes=SELFTEST_MODES.filter(m=>ran?!!results[m.id]:(state==='idle'||set==='full'||m.quick));
  const passed=modes.filter(m=>results[m.id]&&results[m.id].status==='pass').length;
  const failedModes=modes.filter(m=>results[m.id]&&results[m.id].status==='fail');
  // A run with no mode bit-exact proved nothing (pgen_selftest.pl ends it as
@@ -4437,7 +4446,7 @@ function selftestMarkStale(){
 function selftestSubText(st){
  st=st||{};
  if(st.state==='passed'&&!(st.scenarios||[]).some(r=>r&&r.status==='pass')) return 'No mode was proven bit-exact in this run.';
- return st.message||'Full Test: 12 modes, about 3 min. Quick Check: 3 modes, about 40 s. Needs a display and no calibration software attached.';
+ return st.message||'Full Test: 13 modes, about 3 min. Quick Check: 4 modes, about 1 min. Needs a display and no calibration software attached.';
 }
 function selftestPoll(delay){
  if(selftestPollTimer) clearTimeout(selftestPollTimer);
@@ -4453,7 +4462,7 @@ function selftestPoll(delay){
 async function selftestStart(set){
  const quick=set==='quick';
  const ok=await pgConfirm({title:quick?'Run a quick check?':'Run the full self-test?',
-  body:(quick?'3 modes, about 40 seconds.':'12 modes, about 3 minutes.')+' The display switches through SDR'+(quick?' and HDR10':', HDR10, HLG and Dolby Vision')+' and shows dim test windows. Calibration software must stay disconnected until it finishes. Your signal settings come back afterwards.'+(hasUnsavedSettings()?' Unapplied changes are not part of the test.':''),
+  body:(quick?'4 modes, about 1 minute.':'13 modes, about 3 minutes.')+' The display switches through SDR'+(quick?', HDR10 and back to SDR':', HDR10, back to SDR, HLG and Dolby Vision')+' and shows dim test windows. Calibration software must stay disconnected until it finishes. Your signal settings come back afterwards.'+(hasUnsavedSettings()?' Unapplied changes are not part of the test.':''),
   acceptLabel:quick?'Run Quick Check':'Run Full Test',tone:'caution'});
  if(!ok) return;
  selftestOpen={};
@@ -24765,7 +24774,7 @@ function pgPaletteActions(){
   {title:'Discard changes',hint:'Back to the settings the generator runs now',when:dirty,run:()=>discardSettings()},
   {title:'Save as preset',hint:'Store the current signal settings under a name',when:typeof pgPresetSavePrompt==='function',run:()=>pgPresetSavePrompt()},
   {title:'Run full self-test',hint:'Read back every signal mode at the HDMI output',when:!!document.getElementById('selftestRunBtn'),run:()=>{ pgPaletteReveal(document.getElementById('selftestCard')); selftestStart('full'); }},
-  {title:'Run quick check',hint:'3 modes, about 40 seconds',when:!!document.getElementById('selftestQuickBtn'),run:()=>{ pgPaletteReveal(document.getElementById('selftestCard')); selftestStart('quick'); }},
+  {title:'Run quick check',hint:'4 modes, about 1 minute',when:!!document.getElementById('selftestQuickBtn'),run:()=>{ pgPaletteReveal(document.getElementById('selftestCard')); selftestStart('quick'); }},
   {title:'Reset display settings to defaults',hint:'Asks first; nothing changes until Apply',when:typeof resetDefaults==='function',run:()=>resetDefaults()},
   {title:'Keyboard shortcuts',hint:'Show every shortcut',kbd:'?',when:true,run:()=>pgPaletteOpen('help')}
  ];

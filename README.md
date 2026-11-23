@@ -38,7 +38,7 @@ What no other PGenerator build does today. The comparison basis is the latest up
 
 ### 🔬 Codes proven on the cable
 
-The Pi reads back its own scanout. The built-in **Signal Self-Test** draws known codes in twelve signal modes and checks the pixels, the link depth, the AVI infoframe (format, range, colorimetry, VIC), the HDR metadata field by field and the Dolby Vision infoframe, in the form the display's Dolby block asks for. 10-bit codes stay 10-bit, and **RGB Limited goes out without the kernel's compression** (patched vc4). A full 0–1023 sweep comes back exact.
+The Pi reads back its own scanout. The built-in **Signal Self-Test** draws known codes in thirteen signal modes and checks the pixels, the link depth, the AVI infoframe (format, range, colorimetry, VIC), the HDR metadata field by field and the Dolby Vision infoframe, in the form the display's Dolby block asks for. 10-bit codes stay 10-bit, and **RGB Limited goes out without the kernel's compression** (patched vc4). A full 0–1023 sweep comes back exact.
 
 ### 🕶️ A silent source: no SPD InfoFrame
 
@@ -165,14 +165,14 @@ mDNS answers AAAA queries with an NSEC record, so clients do not wait for an IPv
 
 ### 🧪 Signal self-test
 
-One button in **Output** runs twelve signal modes (SDR RGB Limited/Full and YCbCr 4:2:2/4:4:4, HDR10 RGB Limited and YCbCr 4:2:2/4:4:4, HLG RGB Limited and YCbCr 4:4:4, Dolby Vision Standard and Low Latency).
+One button in **Output** runs thirteen signal modes (SDR RGB Limited/Full and YCbCr 4:2:2/4:4:4, HDR10 RGB Limited and YCbCr 4:2:2/4:4:4, SDR RGB Limited again straight after HDR10, HLG RGB Limited and YCbCr 4:4:4, Dolby Vision Standard and Low Latency).
 
 <details>
 <summary>More detail</summary>
 
 - In each mode it draws known codes (greys, colours checked against the BT.709/BT.2020 Y'CbCr formulas, 8-bit and 12-bit source codes), **reads back what the Pi scans out** and checks the link depth and the AVI infoframe: format, range, colorimetry and the VIC of the running mode.
-- It also reads the infoframes from the HDMI packet RAM: HDR metadata only in HDR, field by field against your settings (ST 2084 primaries and luminances; HLG without mastering data), and in Dolby Vision the infoframe the display switches on (the Dolby VSIF with low latency for Low Latency; for Standard the HDMI 1.4b VSIF or the Dolby VSIF without low latency).
-- Your signal settings come back afterwards; a quick check covers three modes in about 40 s.
+- It also reads the infoframes from the HDMI packet RAM: HDR metadata only in HDR (the SDR mode straight after HDR10 proves the HDR infoframe is switched off again; without an HDR infoframe read right before it, it is not run), field by field against your settings (ST 2084 primaries and luminances; HLG without mastering data), and in Dolby Vision the infoframe the display switches on (the Dolby VSIF with low latency for Low Latency; for Standard the HDMI 1.4b VSIF or the Dolby VSIF without low latency).
+- Your signal settings come back afterwards; a quick check covers four modes (SDR, HDR10 and back to SDR) in about a minute.
 - A mode it cannot read back is marked **Not provable** with the reason, not failed: the scanout or the HDMI registers could not be read, or the kernel does not log the AVI infoframe (the Pi 5's driver). A run in which no mode could be proven ends as **No mode could be fully verified** instead of a pass. What it reads but does not match, a framebuffer it cannot decode included, still fails.
 - **Download Logs** includes the last self-test result, its output and a fresh scanout probe, so a failed or unverified run can be explained from the report.
 
