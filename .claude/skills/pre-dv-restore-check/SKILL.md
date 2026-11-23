@@ -155,7 +155,7 @@ milliseconds, so the real code serves as the model; a hand model of
 
 ## Coverage
 
-Sync commit: `6815b96b`
+Sync commit: `fdd8a16d`
 
 - `usr/share/PGenerator/webui.pm`: `webui_apply_config`, `webui_reload_pgenerator_conf`, `webui_selftest_running`
 - `usr/share/PGenerator/command.pm`: `forget_pre_dv_format_depth`, `remember_webui_rgb_quant_range`, `pg_conf_write_checked`, `set_pgenerator_conf_runtime_multi`, `conf_after_helper_writes`, `normalize_dv_transport_conf`, `normalize_conf_write`, `renderer_dv_conf_active`, `renderer_conf_read`, `pgenerator_cmd`
