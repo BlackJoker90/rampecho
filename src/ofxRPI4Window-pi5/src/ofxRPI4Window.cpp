@@ -4195,15 +4195,17 @@ void ofxRPI4Window::updateHDR_Infoframe(hdmi_eotf eotf, int idx)
 			meta.hdmi_metadata_type1.white_point.x = 0;
 			meta.hdmi_metadata_type1.white_point.y = 0;
 
-			/* HLG path: also read min/max DML from conf so the LG C2
-			 * does not apply a near-black lift in HLG mode either. The
-			 * display primaries are zero for HLG (LG TV infers from the
-			 * EOTF), but min/max DML are still honored. */
-			meta.hdmi_metadata_type1.max_display_mastering_luminance = pg_max_dml;
-			meta.hdmi_metadata_type1.min_display_mastering_luminance = pg_min_dml;
+			/* HLG carries no mastering metadata: Data Bytes 3-26 are
+			 * all zero, as PGenerator 1.6 sends them (its
+			 * updateHDR_Infoframe zeroes every field for EOTF 3) and
+			 * the Pi 4 flavour; the Signal Self-Test expects it. The
+			 * conf's Max/Min Luma, MaxCLL and MaxFALL are for HDR10
+			 * only. */
+			meta.hdmi_metadata_type1.max_display_mastering_luminance = 0;
+			meta.hdmi_metadata_type1.min_display_mastering_luminance = 0;
 
-			meta.hdmi_metadata_type1.max_fall = (uint16_t)(pg_max_fall > 0 ? pg_max_fall : 0);
-			meta.hdmi_metadata_type1.max_cll = (uint16_t)(pg_max_cll > 0 ? pg_max_cll : 0);
+			meta.hdmi_metadata_type1.max_fall = 0;
+			meta.hdmi_metadata_type1.max_cll = 0;
 		} else {
 			meta.metadata_type = HDMI_STATIC_METADATA_TYPE1;
 			meta.hdmi_metadata_type1.eotf = eotf;
