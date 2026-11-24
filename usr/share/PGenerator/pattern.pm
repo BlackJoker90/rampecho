@@ -943,6 +943,12 @@ sub get_pattern (@) {
  $str=~s/^END=(.*)$/SOURCE_MAX=$source_max\nEND=$1/mg if($source_max > 0 && $str !~/^SOURCE_MAX=/m);
  $source_range=&pattern_default_source_range($source_range) if($str !~/^SOURCE_RANGE=/m);
  $str=~s/^END=(.*)$/SOURCE_RANGE=$source_range\nEND=$1/mg if($source_range ne "");
+ # "\n^" passes over the first line on purpose, as PGenerator 1.6: a
+ # template whose only FRAME= is on line 1 (SETCONF:<tpl>:FRAME:<n> writes it
+ # there) closes an empty frame with it, and the renderer draws only frames a
+ # FRAME= has closed, so its content still needs this one (audit 52b,
+ # refuted). A BITS= on line 1 keeps the default before it: the renderer
+ # takes the last valid BITS=.
  $str.="FRAME=$frame_default\n"  if($str !~/\n^FRAME=/m);
  my $head="";
  $head.="PATTERN_NAME=$pattern\n" if($str !~/^PATTERN_NAME=/m);
@@ -1016,7 +1022,12 @@ sub lut (@) {
  open(LUT,$file);
  while(<LUT>) {
   next if($_=~/^#/);
-  if($_=~/^($r|ALL),($g|ALL),($b|ALL)=(.*)/ || $_=~/.*ALL.*=(.*)/) {
+  # A rule is "r,g,b=dr,dg,db", where a channel may be ALL (the form of the
+  # shipped lut.txt); the first rule that matches the colour applies. A
+  # second pattern ".*ALL.*=" took any line holding ALL, added nothing and
+  # ended the scan (audit 13b). PGenerator 1.6 has that second pattern: this
+  # departs from it for a lut.txt with ALL rules (maintainer, 2026-11-24).
+  if($_=~/^(\Q$r\E|ALL),(\Q$g\E|ALL),(\Q$b\E|ALL)=(.*)/) {
    ($r_d,$g_d,$b_d)=split(",",$4);
    $r=$r+$r_d;
    $g=$g+$g_d;
