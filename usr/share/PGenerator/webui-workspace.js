@@ -8432,7 +8432,14 @@ async function meterDvAutoCalPollProfile(options){
  meterDvAutoCalProfilePollInFlight=true;
  try{
   const r=await fetchJSON('/api/lg/dv-profile/status',{_quiet:true,_timeoutMs:5000});
-  if(!r) return;
+  // fetchJSON returns null on a failed read: count it in the catch below,
+  // for a pass this tab still runs. After a Stop the pass and its poll are
+  // already cleared, and the catch must not re-arm it.
+  if(!r){
+   if(meterDvAutoCalProfileRunning||meterDvAutoCalProfilePolling)
+    throw new Error('Dolby Vision profile status unavailable');
+   return;
+  }
   meterDvAutoCalProfilePollErrors=0;
   const steps=Array.isArray(r.steps)?r.steps:[];
   // Plot the patches live on the CIE chart. Standalone only -- during a Full
@@ -8458,12 +8465,24 @@ async function meterDvAutoCalPollProfile(options){
    // wizard state and notified the operator -- nothing further to do here.
   }
  }catch(e){
-  meterDvAutoCalProfilePollErrors++;
-  if(!meterDvAutoCalProfilePolling) meterDvAutoCalProfilePolling=setInterval(meterDvAutoCalPollProfile,1500);
-  if(meterDvAutoCalProfilePollErrors>=6){
-   if(meterDvAutoCalProfilePolling){clearInterval(meterDvAutoCalProfilePolling);meterDvAutoCalProfilePolling=null;}
-   meterDvAutoCalProfileRunning=false;
-   meterFullAutoCalAbort('Lost contact with the Dolby Vision profile worker',true);
+  // A failed read is counted and shown, as the greyscale and 3D LUT pollers
+  // do, and never ends the pass by itself: the worker goes on measuring and
+  // holds the TV's calibration session, and an abort from here would leave
+  // it running and send CAL_END under it. Stop ends the pass (maintainer,
+  // 2026-11-24, audit 30). Only while the pass runs: an error after its end
+  // (the upload path) is reported once and does not re-arm the poll, which
+  // would upload again.
+  if(!meterDvAutoCalProfileRunning&&!meterDvAutoCalProfilePolling){
+   try{ toast('Dolby Vision profile: the pass could not be finished ('+((e&&e.message)||e)+')',true); }catch(_e){}
+  }else{
+   meterDvAutoCalProfilePollErrors++;
+   if(!meterDvAutoCalProfilePolling) meterDvAutoCalProfilePolling=setInterval(meterDvAutoCalPollProfile,1500);
+   if(meterDvAutoCalProfilePollErrors>=2){
+    const label=document.getElementById('meterProgressLabel');
+    const progress=document.getElementById('meterProgress');
+    if(progress) progress.style.display='';
+    if(label) label.textContent=(meterDvProfileStandaloneRunning?'':'Full Auto Cal: ')+'Reconnecting to Dolby Vision profile status…';
+   }
   }
  }finally{
   meterDvAutoCalProfilePollInFlight=false;

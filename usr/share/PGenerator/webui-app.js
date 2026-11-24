@@ -478,12 +478,14 @@ function meterStopModalShow(kind,statusText){
  const pack=labels[meterStopModalKind]||labels.meter;
  if(title) title.textContent=pack.title;
  if(status) status.textContent=statusText||pack.status;
- // Cancel affordance: only the Resolve connect wait is user-abortable (the
- // "stopping" masks must run to completion). Show + wire it for that kind only.
+ // Cancel affordance: the Resolve connect wait is user-abortable from the
+ // start; a series stop offers it only once the Pi has not confirmed the end
+ // for two minutes (meterStopModalOfferCancel).
  const cancelRow=document.getElementById('meterStopCancelRow');
  const cancelBtn=document.getElementById('meterStopCancelBtn');
  if(cancelRow&&cancelBtn){
   if(meterStopModalKind==='resolve-connect'){
+   cancelBtn.textContent='Cancel';
    cancelBtn.onclick=resolveConnectCancel;
    cancelRow.style.display='';
   }else{
@@ -500,7 +502,20 @@ function meterStopModalHide(){
  document.body.classList.remove('meter-stop-active','apply-settings-success','apply-settings-error');
  const cancelRow=document.getElementById('meterStopCancelRow');
  if(cancelRow) cancelRow.style.display='none';
+ const cancelBtn=document.getElementById('meterStopCancelBtn');
+ if(cancelBtn) cancelBtn.onclick=null;
  meterStopModalKind='';
+}
+// Shows the modal's cancel row with its own label and action, for a wait that
+// has run long enough to let the operator leave it (audit 51e).
+function meterStopModalOfferCancel(label,onClick){
+ const cancelRow=document.getElementById('meterStopCancelRow');
+ const cancelBtn=document.getElementById('meterStopCancelBtn');
+ if(!cancelRow||!cancelBtn) return false;
+ cancelBtn.textContent=String(label||'Cancel');
+ cancelBtn.onclick=onClick;
+ cancelRow.style.display='';
+ return true;
 }
 
 // LG Connect modal helpers: the same modal skeleton (mask + spinner ->
@@ -20441,6 +20456,9 @@ function meterResumeContinuousAfterPriorityWrite(pauseState){
  },75);
 }
 
+// How long a series stop waits for the Pi's confirmation before its modal
+// offers "Stop waiting" (audit 51e).
+const METER_STOP_TEARDOWN_OFFER_MS=120000;
 async function meterStop(){
  const fullReportSeriesActive=!!(meterFullAutoCalRunning&&meterSeriesRunning&&!meterLg3dAutoCalRunning&&!meterAutoCalRunning);
  if(meterDvAutoCalProfileRunning){
@@ -20501,16 +20519,32 @@ async function meterStop(){
  meterHideWorkflowProgress();
  meterUpdateReadButtons();
  let stopRequestConfirmed=false;
+ // The wait has no end of its own: a lost Pi or a series helper that never
+ // exits would hold the page behind the modal for good. After two minutes
+ // the modal offers "Stop waiting" (audit 51e); the polling goes on until
+ // the operator takes it. The Pi itself refuses a new series while the old
+ // one is still stopping (webui_meter_series_start).
+ let teardownAbandoned=false;
  const waitForSeriesTeardown=async()=>{
   const started=Date.now();
   let lastRetry=started;
-  while(true){
-   const status=await fetchJSON('/api/meter/stop/status',{_quiet:true,_timeoutMs:5000});
+  let offered=false;
+  let abandon=null;
+  const abandoned=new Promise(resolve=>{abandon=resolve;});
+  const orAbandon=p=>Promise.race([p,abandoned]);
+  while(!teardownAbandoned){
+   const status=await orAbandon(fetchJSON('/api/meter/stop/status',{_quiet:true,_timeoutMs:5000}));
+   if(teardownAbandoned) return;
    if(status&&status.series_alive===false&&status.spotread_alive===false) return;
    const elapsed=Date.now()-started;
+   if(!offered&&elapsed>=METER_STOP_TEARDOWN_OFFER_MS){
+    offered=meterStopModalOfferCancel('Stop waiting',()=>{teardownAbandoned=true;abandon();});
+   }
    const statusEl=document.getElementById('meterStopStatus');
    if(statusEl){
-    statusEl.textContent=elapsed>=30000
+    statusEl.textContent=offered
+     ? 'The Pi has not confirmed that the series ended. Keep waiting, or stop waiting and check the meter.'
+     : elapsed>=30000
      ? 'Finishing the current meter transaction and closing the series\u2026'
      : 'Waiting for the series and meter to stop\u2026';
    }
@@ -20519,10 +20553,11 @@ async function meterStop(){
    // polling a series that was never signalled.
    if(!stopRequestConfirmed&&Date.now()-lastRetry>=5000){
     lastRetry=Date.now();
-    const retry=await fetchJSON('/api/meter/stop',{method:'POST',_quiet:true,_timeoutMs:5000});
+    const retry=await orAbandon(fetchJSON('/api/meter/stop',{method:'POST',_quiet:true,_timeoutMs:5000}));
+    if(teardownAbandoned) return;
     stopRequestConfirmed=!!(retry&&retry.status==='ok');
    }
-   await new Promise(resolve=>setTimeout(resolve,500));
+   await orAbandon(new Promise(resolve=>setTimeout(resolve,500)));
   }
  };
  let patternStopped=false;
@@ -20551,6 +20586,8 @@ async function meterStop(){
   meterActionPending=false;
   meterStopModalHide();
   meterUpdateReadButtons();
+  if(teardownAbandoned)
+   toast('Stopped waiting: the Pi has not confirmed that the series ended. A new series can start once it has.','warn');
  }
  if(fullReportSeriesActive) meterFullAutoCalAbort('Full Auto Cal stopped',false);
 }

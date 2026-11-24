@@ -2492,7 +2492,8 @@ __PG_LOGO_DARK__
   <div class="apply-settings-title" id="meterStopTitle">Stopping</div>
   <div class="apply-settings-status" id="meterStopStatus">Waiting for the meter to stop&hellip;</div>
   <div id="meterStopCancelRow" style="display:none;margin-top:16px;text-align:center">
-   <button class="btn btn-sm btn-danger" id="meterStopCancelBtn" type="button">Cancel</button>
+   <!-- .btn is a flex box: text-align does not centre it, the margins do. -->
+   <button class="btn btn-sm btn-danger" id="meterStopCancelBtn" type="button" style="margin:0 auto">Cancel</button>
   </div>
  </div>
 </div>
