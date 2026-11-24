@@ -4,6 +4,12 @@
  * Prints the framebuffer format/modifier and the decoded code values at
  * (x,y) (default: screen centre) and at a few neighbours.
  */
+/* A 64-bit off_t on 32-bit userland, as in usr/bin/pgen_scanout.c: the fake
+ * mmap offset that DRM_IOCTL_MODE_MAP_DUMB returns is a 64-bit value, which
+ * a 32-bit off_t would cut before mmap() sees it. */
+#ifndef _FILE_OFFSET_BITS
+#define _FILE_OFFSET_BITS 64
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
