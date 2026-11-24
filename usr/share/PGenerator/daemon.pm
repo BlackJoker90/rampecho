@@ -402,26 +402,40 @@ sub calman_reset_pattern_state (@) {
 # Modes of the connected HDMI connector as modetest lists them.
 sub calman_connected_modes (@) {
  my @modes=();
- open(my $mt_fh,"$modetest 2>/dev/null|");
+ open(my $mt_fh,"$modetest 2>/dev/null|") or return ();
  my $mt_connected=0;
  while(my $ml=<$mt_fh>) {
-  $mt_connected=1 if($ml =~/\s+connected/);
+  last if($ml =~/^(?:CRTCs|Planes|Framebuffers):/);
+  if($ml =~/^\d+\s+\d+\s+(connected|disconnected|unknown)\s/) {
+   last if($mt_connected);
+   $mt_connected=($1 eq "connected") ? 1 : 0;
+   next;
+  }
+  $mt_connected=1 if(!$mt_connected && $ml =~/\s+connected\b/);
   next if(!$mt_connected);
   # Mode line: #idx WxH[i] rate ... flags ...; type: ...
-  next if($ml !~/^\s*#(\d+)\s+(\d+)x(\d+)(i?)\s+([\d.]+)\s+.*type:\s*(.*)/);
-  push(@modes,{idx=>$1,w=>int($2),h=>int($3),ip=>($4 eq "i") ? "i" : "p",rate=>$5 + 0,type=>$6});
+  next if($ml !~/^\s*#(\d+)\s+(\d+)x(\d+)(i?)\s+(\d+(?:\.\d+)?)\s+.*type:\s*(.*)/);
+  my ($idx,$w,$h,$i,$rate,$type)=($1,int($2),int($3),$4,$5 + 0,$6);
+  my $timing="";
+  if($ml =~/^\s*#\d+\s+(\S+)\s+(\d+(?:\.\d+)?)\s+((?:\d+\s+){8})(\d+)\s+flags:\s*([^;]*);/) {
+   my ($name,$refresh,$t,$clock,$flags)=($1,$2,$3,$4,$5);
+   $t=~s/\s+$//; $t=~s/\s+/,/g;
+   $flags=~s/\s+//g;
+   $timing="$name\@$refresh:$t:$clock:$flags";
+  }
+  push(@modes,{idx=>$idx,w=>$w,h=>$h,ip=>($i eq "i") ? "i" : "p",rate=>$rate,type=>$type,timing=>$timing});
  }
  close($mt_fh);
  return @modes;
 }
 
-sub calman_find_mode_idx (@) {
- my ($req_w,$req_h,$req_ip,$req_rate)=@_;
- return -1 if(!$req_h || !$req_rate);
+sub calman_find_mode_idx_in (@) {
+ my ($modes,$req_w,$req_h,$req_ip,$req_rate)=@_;
+ return -1 if(ref($modes) ne "ARRAY" || !$req_h || !$req_rate);
  $req_ip=defined($req_ip) && $req_ip ne "" ? lc($req_ip) : "p";
  my $best_idx=-1;
  my $best_score=0;
- foreach my $m (&calman_connected_modes()) {
+ foreach my $m (@$modes) {
   next if($m->{h} != $req_h || $m->{ip} ne $req_ip);
   # Tolerate reference integer labels for fractional HDMI modes.
   my $rate_match=(int($m->{rate}) == int($req_rate)) || (abs($m->{rate} - ($req_rate + 0)) < 0.25);
@@ -443,32 +457,182 @@ sub calman_find_mode_idx (@) {
  return $best_idx;
 }
 
+sub calman_find_mode_idx (@) {
+ my @modes=&calman_connected_modes();
+ return &calman_find_mode_idx_in(\@modes,@_);
+}
+
+# Persist Calman's remembered mode index together with its full timing so a
+# port or display change (different EDID mode list) can follow the timing
+# instead of applying the bare index to whatever mode happens to sit there.
+sub calman_remember_mode (@) {
+ my ($idx,$timing)=@_;
+ return 0 if(!defined $idx || $idx !~/^\d+$/);
+ $timing="" if(!defined $timing);
+ my %before=map { ($_ => $pgenerator_conf{$_}) } qw(calman_mode_idx calman_mode_timing calman_mode_timing_idx);
+ my @pairs=("calman_mode_idx","$idx");
+ if($timing ne "") {
+  push(@pairs,"calman_mode_timing",$timing,"calman_mode_timing_idx","$idx");
+ } elsif((defined($pgenerator_conf{"calman_mode_timing"}) ? "$pgenerator_conf{calman_mode_timing}" : "") ne "" ||
+         (defined($pgenerator_conf{"calman_mode_timing_idx"}) ? "$pgenerator_conf{calman_mode_timing_idx}" : "") ne "") {
+  push(@pairs,"calman_mode_timing","","calman_mode_timing_idx","");
+ }
+ if((&set_pgenerator_conf_runtime_multi(@pairs) || "")!~/^\Q$ok_response\E/) {
+  for my $k (keys %before) {
+   if(defined $before{$k}) { $pgenerator_conf{$k}=$before{$k}; }
+   else { delete $pgenerator_conf{$k}; }
+  }
+  &log("Calman: could not remember mode_idx=$idx (conf not written)");
+  return 0;
+ }
+ return 1;
+}
+
 sub calman_apply_init_mode (@) {
- my $init_mode_idx=$pgenerator_conf{"calman_mode_idx"} || "";
+ # A forked WebUI apply worker (mode_idx_follow_timing / auto_select_4k_mode)
+ # can move mode_idx on disk without updating the parent daemon's shared hash;
+ # sync from the running renderer's conf before comparing or refreshing HDMI info.
+ if($is_kms && defined(&renderer_running_conf)) {
+  my $run_conf=eval { &renderer_running_conf() };
+  if(ref($run_conf) eq "HASH" && defined($run_conf->{"mode_idx"}) && $run_conf->{"mode_idx"} =~/^\d+$/) {
+   my $cur=defined($pgenerator_conf{"mode_idx"}) ? "$pgenerator_conf{mode_idx}" : "";
+   $pgenerator_conf{"mode_idx"}="$run_conf->{mode_idx}" if($cur ne "$run_conf->{mode_idx}");
+  }
+ }
+ my @modes=&calman_connected_modes();
+ my %by_idx=map { $_->{idx} => $_ } @modes;
+ my $refresh_hdmi=sub {
+  return if(!@modes);
+  # A forked WebUI apply worker or display change may have updated the active
+  # mode since this process last read HDMI info; refresh before GET_SETTINGS.
+  &invalidate_hdmi_info_cache();
+  &get_hdmi_info();
+ };
+ my $find_exact_w=sub {
+  my ($w,$h,$ip,$r)=@_;
+  my $idx=@modes ? &calman_find_mode_idx_in(\@modes,$w,$h,$ip,$r) : &calman_find_mode_idx($w,$h,$ip,$r);
+  return -1 if($idx < 0);
+  return -1 if(@modes && (!$by_idx{$idx} || $by_idx{$idx}->{w} != $w));
+  return $idx;
+ };
+ my $init_mode_idx=defined($pgenerator_conf{"calman_mode_idx"}) ? "$pgenerator_conf{calman_mode_idx}" : "";
+ my $default_picked=0;
+ my $persist_resolved=1;
+ my $persist_timing=undef;
  if($init_mode_idx eq "" || $init_mode_idx !~/^\d+$/) {
-  my $default_idx=&calman_find_mode_idx(1920,1080,"p",24);
+  my $default_idx=$find_exact_w->(1920,1080,"p",24);
   if($default_idx >= 0) {
-   $init_mode_idx=$default_idx;
-   if(&pg_conf_write_checked("calman_mode_idx","$init_mode_idx")) {
+   $init_mode_idx="$default_idx";
+   $default_picked=1;
+  }
+ }
+ if($init_mode_idx eq "" || $init_mode_idx !~/^\d+$/) {
+  $refresh_hdmi->();
+  return;
+ }
+ if(@modes) {
+  my $remembered=$by_idx{$init_mode_idx};
+  my $rec_timing=defined($pgenerator_conf{"calman_mode_timing"}) ? "$pgenerator_conf{calman_mode_timing}" : "";
+  my $rec_idx=defined($pgenerator_conf{"calman_mode_timing_idx"}) ? "$pgenerator_conf{calman_mode_timing_idx}" : "";
+  if(!$default_picked && $rec_timing ne "" && $rec_idx eq $init_mode_idx) {
+   # Follow the recorded timing when the display or HDMI port changed under
+   # calman_mode_idx (like mode_idx_follow_timing in command.pm): exact timing
+   # first, then same WxH@rate (with matching width) on the new EDID, else 1080p24.
+   if(!$remembered || ($remembered->{timing} ne "" && $remembered->{timing} ne $rec_timing)) {
+    my @exact=sort { $a->{idx} <=> $b->{idx} } grep { $_->{timing} ne "" && $_->{timing} eq $rec_timing } @modes;
+    my ($match)=(grep({ $_->{type} !~/userdef/ } @exact), @exact);
+    my $matched_exact=$match ? 1 : 0;
+    if(!$match && $rec_timing =~/^(\d+)x(\d+)(i?)\@(\d+(?:\.\d+)?)(?::|\z)/) {
+     my $fb_idx=$find_exact_w->(int($1),int($2),($3 eq "i" ? "i" : "p"),$4 + 0);
+     $match=$by_idx{$fb_idx} if($fb_idx >= 0);
+    }
+    if($match) {
+     &log("Calman: calman_mode_idx $init_mode_idx -> $match->{idx}: display mode list changed (keeping $rec_timing)");
+     $init_mode_idx="$match->{idx}";
+     $remembered=$match;
+     $persist_timing=$matched_exact ? $rec_timing : ($match->{timing} || $rec_timing);
+    } else {
+     my $fb24=$find_exact_w->(1920,1080,"p",24);
+     if($fb24 >= 0) {
+      &log("Calman: calman_mode_idx $init_mode_idx ($rec_timing) not on this display, using 1080p24 mode_idx=$fb24");
+      $init_mode_idx="$fb24";
+      $remembered=$by_idx{$fb24};
+      # Keep the remembered timing on disk so moving back to the original
+      # display restores it.
+      $persist_resolved=0;
+     } else {
+      &log("Calman: calman_mode_idx $init_mode_idx ($rec_timing) not on this display; keeping current mode");
+      $refresh_hdmi->();
+      return;
+     }
+    }
+   }
+  } elsif(!$remembered) {
+   my $fb24=$find_exact_w->(1920,1080,"p",24);
+   if($fb24 >= 0) {
+    &log("Calman: remembered mode_idx=$init_mode_idx not in display mode list, using 1080p24 mode_idx=$fb24");
+    $init_mode_idx="$fb24";
+    $remembered=$by_idx{$fb24};
+   } else {
+    &log("Calman: remembered mode_idx=$init_mode_idx not in display mode list; keeping current mode");
+    $refresh_hdmi->();
+    return;
+   }
+  }
+  # Remembered before the EDID timing was preferred: move to the same mode
+  # from the EDID so the infoframe carries the VIC and the range.
+  if($remembered && $remembered->{type} =~/userdef/) {
+   my $edid_idx=$find_exact_w->($remembered->{w},$remembered->{h},$remembered->{ip},$remembered->{rate});
+   if($edid_idx >= 0 && $edid_idx != $init_mode_idx) {
+    &log("Calman: remembered mode_idx=$init_mode_idx is the userdef boot mode, using mode_idx=$edid_idx");
+    $init_mode_idx="$edid_idx";
+    $remembered=$by_idx{$init_mode_idx};
+    $persist_timing=$remembered ? $remembered->{timing} : "";
+   }
+  }
+ }
+ # Persist once (after any timing follow / userdef upgrade) when the conf does
+ # not already match the resolved index and timing.
+ if($persist_resolved) {
+  my $save_timing=defined($persist_timing) ? $persist_timing : ($by_idx{$init_mode_idx} ? $by_idx{$init_mode_idx}->{timing} : "");
+  my $cur_cal_idx=defined($pgenerator_conf{"calman_mode_idx"}) ? "$pgenerator_conf{calman_mode_idx}" : "";
+  my $cur_cal_t=defined($pgenerator_conf{"calman_mode_timing"}) ? "$pgenerator_conf{calman_mode_timing}" : "";
+  my $cur_cal_ti=defined($pgenerator_conf{"calman_mode_timing_idx"}) ? "$pgenerator_conf{calman_mode_timing_idx}" : "";
+  my $need_save=($cur_cal_idx ne "$init_mode_idx") ||
+                ($save_timing ne "" && ($cur_cal_t ne $save_timing || $cur_cal_ti ne "$init_mode_idx"));
+  if($need_save) {
+   if(&calman_remember_mode($init_mode_idx,$save_timing) && $default_picked) {
     &log("Calman: default init mode remembered as 1080p24 mode_idx=$init_mode_idx");
    }
   }
  }
- return if($init_mode_idx eq "" || $init_mode_idx !~/^\d+$/);
- # Remembered before the EDID timing was preferred: move to the same mode
- # from the EDID so the infoframe carries the VIC and the range.
- my ($remembered)=grep { $_->{idx} == $init_mode_idx } &calman_connected_modes();
- if($remembered && $remembered->{type} =~/userdef/) {
-  my $edid_idx=&calman_find_mode_idx($remembered->{w},$remembered->{h},$remembered->{ip},$remembered->{rate});
-  if($edid_idx >= 0 && $edid_idx != $init_mode_idx) {
-   &log("Calman: remembered mode_idx=$init_mode_idx is the userdef boot mode, using mode_idx=$edid_idx");
-   $init_mode_idx=$edid_idx;
-   &pg_conf_write_checked("calman_mode_idx","$init_mode_idx");
+ my $cur_mode_idx=defined($pgenerator_conf{"mode_idx"}) ? "$pgenerator_conf{mode_idx}" : "";
+ if($cur_mode_idx ne "$init_mode_idx") {
+  # Pre-check against the signal gate before calling SET_MODE so a remembered
+  # mode that does not fit the current signal (e.g. 4K60 on 10-bit RGB) leaves
+  # the working output alone instead of setting signal_refused_pending and
+  # NAKing the INIT handshake.
+  if($is_kms && defined(&signal_check_conf)) {
+   my %probe=(%pgenerator_conf,mode_idx=>"$init_mode_idx");
+   my ($check)=eval { &signal_check_conf(\%probe) };
+   if($@) {
+    &log("Calman: INIT signal pre-check failed: $@");
+   } elsif(ref($check) eq "HASH" && !$check->{ok}) {
+    &log("Calman: INIT remembered mode_idx=$init_mode_idx incompatible with current signal (".($check->{reason} || "refused")."), keeping current mode");
+    $refresh_hdmi->();
+    return;
+   }
   }
- }
- if(($pgenerator_conf{"mode_idx"} || "") ne $init_mode_idx) {
   &log("Calman: INIT applying remembered mode_idx=$init_mode_idx");
-  &pgenerator_cmd("SET_MODE:$init_mode_idx");
+  my $mode_reply=&pgenerator_cmd("SET_MODE:$init_mode_idx");
+  if(($mode_reply // "")=~/^\Q$error_response\E:Refused/) {
+   &log("Calman: INIT mode_idx=$init_mode_idx refused, output unchanged");
+   $refresh_hdmi->();
+   return;
+  }
+  &get_hdmi_info();
+ } else {
+  $refresh_hdmi->();
  }
 }
 #
@@ -653,39 +817,47 @@ sub calman_render_rgb_pattern (@) {
  }
  my $patch_context=&calman_patch_context();
  my $current_bg=&calman_current_bg();
- &log("Calman PATTERN: scaled=$r,$g,$b bg=$current_bg max_bpc=$pgenerator_conf{'max_bpc'} $patch_context");
- &log_calman_patch(type=>$type,
-                   raw=>$rgb_raw,
-                   scaled=>"$r,$g,$b",
-                   win=>$calman_win_size,
-                   bg=>$current_bg,
-                   range=>&calman_pattern_source_range(),
-                   peer=>$connection ? $client_ip{$connection} : "",
-                   extra=>"raw_extra=".join(",",@el_cmd[3..$#el_cmd])." target_max=$target_max calman_max=$calman_max $patch_context");
+ my $source_range=&calman_pattern_source_range();
+ my $patch_extra="raw_extra=".join(",",@el_cmd[3..$#el_cmd])." target_max=$target_max calman_max=$calman_max $patch_context";
+ my $record_patch=sub {
+  my ($log_win,$log_bg)=@_;
+  &log("Calman PATTERN: scaled=$r,$g,$b bg=$log_bg max_bpc=$pgenerator_conf{'max_bpc'} $patch_context");
+  &log_calman_patch(type=>$type,
+                    raw=>$rgb_raw,
+                    scaled=>"$r,$g,$b",
+                    win=>$log_win,
+                    bg=>$log_bg,
+                    range=>$source_range,
+                    peer=>$connection ? $client_ip{$connection} : "",
+                    extra=>$patch_extra);
+ };
  if($full_key eq "") {
   $full_key=$start_cmd_string_calman.$type.":".$pattern_cmd;
  }
  if($calman_special_pattern{$full_key} ne "" && -f "$pattern_templates/$calman_special_pattern{$full_key}") {
+  $record_patch->($calman_win_size,$current_bg);
   &get_pattern("TESTTEMPLATE","$calman_special_pattern{$full_key}","","TESTTEMPLATE:$calman_special_pattern{$full_key}");
   &clean_pattern_files();
   return 1;
  }
- my $source_range=&calman_pattern_source_range();
  if($type =~/RGB_B/) {
   # The background as the patch: a percent grey gets the same code in both.
-  my ($bg_val)=&calman_codes_out($el_cmd[3],$el_cmd[3],$el_cmd[3],$calman_max,$target_max);
+  my $bg_in=defined($el_cmd[3]) ? $el_cmd[3] : 0;
+  my ($bg_val)=&calman_codes_out($bg_in,$bg_in,$bg_in,$calman_max,$target_max);
   $calman_apl_enabled=0;
   $calman_bg="$bg_val,$bg_val,$bg_val";
+  $record_patch->($calman_win_size,$calman_bg);
   &clean_pattern_files();
   &get_pattern($test_template_command,$pattern_dynamic,"$r,$g,$b;$calman_bg","calman",$source_range,$source_max);
   return 1;
  }
  if($type =~/RGB_S/) {
-  my $win_pct=int($el_cmd[3]);
+  my $win_pct=defined($el_cmd[3]) ? int($el_cmd[3]) : 0;
   $win_pct=$calman_win_size if($win_pct < 1);
   $win_pct=100 if($win_pct > 100);
   $calman_win_size=$win_pct if($win_pct > 0);
   my $effective_bg=$current_bg;
+  $record_patch->($win_pct,$effective_bg);
   &log("Calman: RGB_S direct window size=$win_pct% bg=$effective_bg");
   if($win_pct >= 100) {
    $pname_file="FullField";
@@ -713,6 +885,7 @@ sub calman_render_rgb_pattern (@) {
   $win_pct=$calman_win_size if($win_pct < 1);
   $win_pct=100 if($win_pct > 100);
   $calman_win_size=$win_pct if($win_pct > 0);
+  $record_patch->($win_pct,$effective_bg);
   &log("Calman: RGB_A explicit bg=$effective_bg size=$win_pct%");
   if($win_pct >= 100) {
    $pname_file="FullField";
@@ -728,6 +901,7 @@ sub calman_render_rgb_pattern (@) {
   return 1;
  }
  my $effective_bg=&calman_apl_bg("$r,$g,$b",$calman_win_size,$type);
+ $record_patch->($calman_win_size,$effective_bg);
  &clean_pattern_files();
  &get_pattern($test_template_command,$pattern_dynamic,"$r,$g,$b;$effective_bg","calman",$source_range,$source_max);
  return 1;
@@ -3334,7 +3508,8 @@ sub pattern_daemon {
       }
       &log("Calman: CONF_FORMAT parsed width=".($req_w||"")." height=".($req_h||"")." scan=".($req_ip||"")." rate=".($req_rate||"")) if($req_h);
       if($req_h && $req_rate) {
-       my $best_idx=&calman_find_mode_idx($req_w,$req_h,$req_ip,$req_rate);
+       my @fmt_modes=&calman_connected_modes();
+       my $best_idx=@fmt_modes ? &calman_find_mode_idx_in(\@fmt_modes,$req_w,$req_h,$req_ip,$req_rate) : &calman_find_mode_idx($req_w,$req_h,$req_ip,$req_rate);
       if($best_idx >= 0) {
        &log("Calman: CONF_FORMAT matched mode_idx=$best_idx for ${req_h}${req_ip}${req_rate}");
        my $mode_reply=&pgenerator_cmd("SET_MODE:$best_idx");
@@ -3349,7 +3524,8 @@ sub pattern_daemon {
         &send_key_to_client($connection,"");
         last;
        }
-       if(&pg_conf_write_checked("calman_mode_idx","$best_idx")) {
+       my ($best_mode)=grep { $_->{idx} == $best_idx } @fmt_modes;
+       if(&calman_remember_mode($best_idx,$best_mode ? $best_mode->{timing} : "")) {
         &log("Calman: remembered CONF_FORMAT mode_idx=$best_idx");
        }
        # Update cached resolution
