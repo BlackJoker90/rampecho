@@ -426,6 +426,13 @@ sub lg_calibration_run_active (@) {
   next if(!defined($json) || $json eq "");
   return 1 if($json=~/"status"\s*:\s*"running"/);
  }
+ # The Dolby Vision profile worker counts only while its process lives: a
+ # worker killed before its last write leaves "running" in its state, and
+ # its status endpoint does not write the correction back, so the state
+ # alone would hold this gate open until the next DV run (audit 51n-3).
+ # Without a state file no DV run counts here (the start writes it before
+ # the spawn), and no process lookup is made.
+ return 1 if(-f "/tmp/meter_lg_dv_profile.json" && &lg_dv_profile_worker_active());
  # An open meter session means a read is in progress or imminent.
  return 1 if(-f "/tmp/meter_session.pid");
  return 0;
@@ -1558,7 +1565,7 @@ sub lg_autocal_worker_running (@) {
  # unknown blocks; the reset path leaves it unset so unknown cannot lock the
  # operator out of their own recovery route.
  my ($strict)=@_;
- foreach my $name (qw(webui_meter_lg_autocal_running webui_meter_lg_3d_autocal_running)) {
+ foreach my $name (qw(webui_meter_lg_autocal_running webui_meter_lg_3d_autocal_running lg_dv_profile_worker_active)) {
   no strict 'refs';
   next if(!defined(&{"main::$name"}));
   my $running=eval { &{"main::$name"}() };
@@ -2390,6 +2397,23 @@ my $_meter_lg_dv_profile_start_lock_file="/tmp/meter_lg_dv_profile.start.lock";
 sub webui_meter_lg_dv_profile_running (@) {
  my $alive=`pgrep -f '[m]eter_lg_dv_profile\\.pl' 2>/dev/null`;
  return ($alive=~/\d/) ? 1 : 0;
+}
+
+# The Dolby Vision profile worker holds the TV's calibration session like the
+# AutoCal workers, so lg_autocal_worker_running counts it too (audit 51n-3):
+# while its process is alive and its state's top-level status is still
+# "running". It writes "complete" right before it exits, and the run/end the
+# WebUI sends on that state must not find it still running and leave the
+# session open; a Stop marks the state "cancelled" before its run/end. Alive
+# without a readable state (not written yet, cut short) counts. The state is
+# read first: a finished one answers without the pgrep fork, which the CEC
+# gate of every picture-settings call would otherwise pay.
+sub lg_dv_profile_worker_active (@) {
+ my $json="";
+ if(open(my $fh,"<",$_meter_lg_dv_profile_file)) { local $/; $json=<$fh>; close($fh); }
+ my $state=eval { JSON::PP::decode_json($json // "") };
+ return 0 if(ref($state) eq "HASH" && ($state->{"status"} // "") ne "running");
+ return &webui_meter_lg_dv_profile_running() ? 1 : 0;
 }
 
 sub webui_meter_lg_dv_profile_same_run_running (@) {
