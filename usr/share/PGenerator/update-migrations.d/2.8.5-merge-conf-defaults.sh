@@ -32,6 +32,11 @@ while IFS= read -r line; do
  [ -n "$key" ] || continue
  case "$key" in *[!A-Za-z0-9_]* ) continue ;; esac
  if ! grep -q "^${key}=" "$CONF"; then
+  # A conf whose last line has no newline would take the key onto it
+  # (as merge_conf_defaults in pgenerator-update).
+  if [ "$added" -eq 0 ] && [ -s "$CONF" ] && [ -n "$(tail -c 1 "$CONF")" ]; then
+   printf '\n' >> "$CONF"
+  fi
   printf '%s\n' "$line" >> "$CONF"
   added=$((added + 1))
   echo "conf: added new default key ${key}"
