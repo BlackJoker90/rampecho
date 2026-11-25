@@ -576,6 +576,12 @@ sub add_check {
                           ($info ? (info=>JSON::PP::true) : ()),($swatch ? (swatch=>$swatch) : ())});
  $entry->{total}++ if(!$info);
  $entry->{passed}++ if($ok && !$info);
+ # While its windows are drawn, a mode's score counts against all the
+ # checks it will have ("planned", set once the windows are known), not
+ # the ones done so far: 1/13, 2/13 ..., where 1/1, 2/2 ... read as a
+ # finished result (a Pi 5 tester, 2026-11-23). A window that ends up not
+ # verified is not counted, so it leaves the plan too.
+ $entry->{planned}-- if($info && defined($entry->{planned}));
 }
 
 #
@@ -868,6 +874,9 @@ for(my $n=0;$n<@scenarios;$n++) {
  push(@windows,map { [10,1023,$_] } @{$sc->{codes} || []}) if($provable);
  push(@windows,map { [8,255,$_] } @{$sc->{codes8} || []}) if($provable);
  push(@windows,map { [10,4095,$_] } @{$sc->{codes12} || []}) if($provable && !$sc->{tunnel});
+ # The checks so far and one per window: the score's denominator while the
+ # windows run (add_check).
+ $entry->{planned}=$entry->{total}+scalar(@windows);
  my $fb_format="";
  foreach my $win (@windows) {
   &finish("cancelled","The self-test was stopped. Your signal settings are back.") if(&cancelled());

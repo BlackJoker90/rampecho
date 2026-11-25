@@ -4365,6 +4365,15 @@ function selftestLinkText(link){
  if(link.fb) parts.push('framebuffer '+link.fb);
  return parts.join(' · ');
 }
+// A mode's score. A running mode counts against the checks it will have
+// (planned, from the script once its windows are known): 1/13, 2/13 ...;
+// without planned (before its windows, or an older script) it has none. A
+// stopped run leaves its mode "running": row and copied report say the same.
+function selftestScore(r){
+ if(!r) return '';
+ const of=r.status==='running'?r.planned:r.total;
+ return of>0?r.passed+'/'+of:'';
+}
 function selftestModeRow(mode,result,running){
  const r=result||{status:'pending',checks:[],passed:0,total:0};
  const status=r.status||'pending';
@@ -4378,7 +4387,7 @@ function selftestModeRow(mode,result,running){
  const chans=' <span class="selftest-chans">'+(/4:4:4/.test(fmt)?'Cb Cr Y':/4:2:2/.test(fmt)?'Y Cb Cr':'R G B')+'</span>';
  const strip=windows.length?windows.map(c=>'<span class="selftest-swatch'+(c.ok?'':' is-off')+'" style="background:'+selftestSwatchColor(c.swatch)+'" title="'+pgHtmlEsc(c.label+': '+(c.ok?'exact':'expected '+c.expect+', read '+c.got))+'"></span>').join('')
   :'';
- const score=r.total?pgHtmlEsc(r.passed+'/'+r.total):'';
+ const score=pgHtmlEsc(selftestScore(r));
  const rows=(r.checks||[]).map(c=>'<tr class="'+(c.ok?'':'is-off')+'"><th scope="row">'+(c.swatch?'<span class="selftest-swatch" style="background:'+selftestSwatchColor(c.swatch)+'"></span>':'')+pgHtmlEsc(c.label)+'</th><td>'+pgHtmlEsc(c.expect)+'</td><td>'+pgHtmlEsc(c.got)+'</td><td class="selftest-cell-state">'+(c.ok?(c.swatch?'Exact':'Match'):(c.info?'Not verified':'Mismatch'))+'</td></tr>').join('');
  const detail=(r.checks||[]).length?
   '<div class="selftest-detail" id="selftestDetail_'+mode.id+'"'+(open?'':' hidden')+'>'+
@@ -4539,7 +4548,7 @@ async function selftestCopyReport(){
  const lines=['rampecho '+ver+' signal self-test: '+(st.state||'')+(st.resolution?' at '+st.resolution:'')+(st.finished?' ('+new Date(st.finished*1000).toISOString()+')':''),st.message||''];
  selftestRuns(st).forEach(r=>{
   lines.push('');
-  lines.push(r.group+' '+r.label+' '+r.depth+'-bit: '+(SELFTEST_STATUS_TEXT[r.status]||r.status)+(r.total?' '+r.passed+'/'+r.total:''));
+  lines.push(r.group+' '+r.label+' '+r.depth+'-bit: '+(SELFTEST_STATUS_TEXT[r.status]||r.status)+(selftestScore(r)?' '+selftestScore(r):''));
   if(r.note) lines.push('  '+r.note);
   if(r.link&&r.link.avi) lines.push('  AVI '+r.link.avi+' | '+selftestLinkText(r.link));
   (r.checks||[]).forEach(c=>lines.push('  '+(c.ok?'ok  ':(c.info?'n/a ':'FAIL'))+' '+c.label+': expected '+c.expect+', read '+c.got));

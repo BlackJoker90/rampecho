@@ -14039,7 +14039,9 @@ our $_tvmenu_state_file="$var_dir/running/tvmenu-state.json";
 our $_tvmenu_settings_file="$var_dir/tvmenu/settings.json";
 our $_tvmenu_announce_file="/tmp/pgen-cec-announce";
 our $_tvmenu_font="/usr/share/fonts/omxplayer/FreeSans.ttf";
-our $_tvmenu_thumb_version="1";
+# Raised when a cached thumbnail's picture changes: 2 = Black Clipping with
+# dim labels (2026-11-25).
+our $_tvmenu_thumb_version="2";
 # Set while the dispatcher draws, so a pattern drawn from elsewhere (WebUI,
 # playlist step in the browser) can tell the menu it is no longer on screen.
 our $_tvmenu_drawing=0;
@@ -14145,7 +14147,7 @@ sub webui_tvmenu_thumb (@) {
   $y=int(($sh-$img->{h})/2) if($y == -1);
   @src=("-size","${sw}x${sh}","xc:rgb(".join(",",@$bg).")",$tmp,"-geometry",sprintf("%+d%+d",$x,$y),"-composite");
  } elsif($name eq "black_clipping") {
-  return "" if(!&webui_pattern_render_black_clipping($tmp,$sw,$sh,"sdr",100));
+  return "" if(!&webui_pattern_render_black_clipping($tmp,$sw,$sh,"sdr",100,"sdr"));
   @src=($tmp);
  } elsif($name eq "white_clipping") {
   return "" if(!&webui_pattern_render_white_clipping($tmp,$sw,$sh,"sdr",100));
@@ -14158,7 +14160,15 @@ sub webui_tvmenu_thumb (@) {
  my $part="$file.tmp.png";
  system($convert,@src,"-filter","Triangle","-resize","${tw}x${th}!","-depth","8","PNG24:$part");
  unlink($tmp);
- return (-f $part && rename($part,$file)) ? $file : "";
+ return "" if(!-f $part || !rename($part,$file));
+ # This tile's thumbnail of an older version ($_tvmenu_thumb_version) is
+ # not read again: the directory survives clean_files, so it goes here.
+ if(opendir(my $dh,$dir)) {
+  my @old=grep { /^v(\d+)-\Q$tag\E\.png$/ && $1 ne $_tvmenu_thumb_version } readdir($dh);
+  closedir($dh);
+  unlink(map { "$dir/$_" } @old);
+ }
+ return $file;
 }
 
 our $_tvmenu_bg="#0d0f13";
@@ -15515,6 +15525,29 @@ sub webui_pattern_legacy_byte (@) {
  return int($value*$peak_byte/255 + 0.5);
 }
 
+# The labels of the Black Clipping plate: text read on a black field, at
+# about 5 cd/m2 whatever the EOTF on the cable (maintainer, 2026-11-25).
+# The 220 they had was about 84 cd/m2 in SDR and, as a PQ code, above any
+# display's peak in HDR10 (a Pi 5 tester asked for dimmer labels, above all
+# in HDR). An 8-bit limited code, as the plate's bars:
+# - SDR: BT.1886 on a 100 cd/m2 display, black 0 (gamma 2.4): 79;
+# - HDR10 and Dolby Vision: ST 2084 for 5 cd/m2: 70;
+# - HLG: BT.2100 on its 1000 cd/m2 reference display (system gamma 1.2): 58.
+sub webui_pattern_dim_label_byte (@) {
+ my $signal_mode=lc(shift || "");
+ my $nits=5;
+ my $e;
+ if(&webui_pattern_is_pq_mode($signal_mode)) {
+  $e=&webui_pattern_pq_encode_normalized($nits);
+ } elsif($signal_mode eq "hlg") {
+  my $scene=($nits/1000)**(1/1.2);
+  $e=($scene <= 1/12) ? sqrt(3*$scene) : 0.17883277*log(12*$scene-0.28466892)+0.55991073;
+ } else {
+  $e=($nits/100)**(1/2.4);
+ }
+ return int(16+219*$e+0.5);
+}
+
 sub webui_pattern_image_source_byte (@) {
  my $value=int(shift);
  $value=0 if($value < 0);
@@ -15851,6 +15884,11 @@ sub webui_pattern_render_black_clipping (@) {
  my $h=int(shift);
  my $signal_mode=shift;
  my $max_luma=shift;
+ # The labels' level follows the mode on the cable (the conf), not a
+ # signal_mode the page sends with the request: its Output select can name
+ # a mode not applied yet. The TV menu's thumbnail names its own.
+ my $label_mode=shift;
+ $label_mode=&webui_pattern_signal_mode("") if(!defined($label_mode) || $label_mode eq "");
  my $image=&webui_pattern_image_new($w,$h,0,0,0);
  my @levels=(2,4,6,8,10,12,14,16,18,20,22,24,25);
  my @labels=@levels;
@@ -15867,6 +15905,7 @@ sub webui_pattern_render_black_clipping (@) {
  my $bar_y2=$panel_y+$panel_h-int($panel_h*0.08)-1;
  $frame_t=2 if($frame_t < 2);
  $gap=2 if($gap < 2);
+ my $label_v=&webui_pattern_dim_label_byte($label_mode);
  @levels=map { &webui_pattern_legacy_byte($_,$signal_mode,$max_luma) } @levels;
  &webui_pattern_image_box($image,$panel_x,$panel_y,$panel_x+$panel_w-1,$panel_y+$panel_h-1,$frame_t,56,56,56);
  &webui_pattern_image_rect($image,$panel_x,$footer_y,$panel_x+$panel_w-1,$footer_y+$footer_h-1,0,0,0);
@@ -15882,7 +15921,7 @@ sub webui_pattern_render_black_clipping (@) {
   $x1=$slot_x1 if($x1 > $x2);
   $x2=$slot_x2 if($x2 < $x1);
   &webui_pattern_image_rect($image,$x1,$bar_y1,$x2,$bar_y2,$v,$v,$v);
-  &webui_pattern_image_text_center($image,$label,$slot_x1,$slot_x2,$footer_y+int(($footer_h-5*$scale)/2),$scale,220,220,220);
+  &webui_pattern_image_text_center($image,$label,$slot_x1,$slot_x2,$footer_y+int(($footer_h-5*$scale)/2),$scale,$label_v,$label_v,$label_v);
  }
  return &webui_pattern_image_save($image,$file);
 }
