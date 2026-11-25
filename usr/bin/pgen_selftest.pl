@@ -389,23 +389,24 @@ sub dv_vsif_form_check {
    add_check($entry,"Dolby Vision VSIF form for the display","form from the display's VSVDB","not verified (display EDID not read)",0,1);
    $entry->{unverified}=1;
   } else {
-  my $name=sub { my ($f,$b)=@_; return ($f eq "1" ? "HDMI 1.4b form" : $f eq "2" ? "Dolby form" : "kernel form (no VSVDB)").($b eq "1" ? ", low latency PB5 0x10" : ""); };
+  my $name=sub { my ($f,$b)=@_; return ($f eq "1" ? "HDMI 1.4b form" : $f eq "2" ? "Dolby form" : "kernel form").($b eq "1" ? ", low latency PB5 0x10" : ""); };
   my ($cf,$cb)=(defined($conf->{dv_vsif_form}) ? "$conf->{dv_vsif_form}" : "",defined($conf->{dv_ll_bt2020}) ? "$conf->{dv_ll_bt2020}" : "");
   add_check($entry,"Dolby Vision VSIF form for the display",$name->($form,$bt2020),$name->($cf,$cb),($cf eq $form && $cb eq $bt2020));
   }
  }
- if(!defined $module_forms) {
+ my $want=PGSelfTestCheck::dv_vsif_expect($transport,$conf->{dv_vsif_form},$conf->{dv_ll_bt2020},1);
+ my $needs_patch=(($want->{form} // "") !~ /kernel/) ? 1 : 0;
+ if($needs_patch && !defined $module_forms) {
   add_check($entry,"Dolby Vision VSIF form","form from the conf","not verified (vc4 module version not readable), read $got",0,1);
   $entry->{unverified}=1;
   return;
  }
- my $want=PGSelfTestCheck::dv_vsif_expect($transport,$conf->{dv_vsif_form},$conf->{dv_ll_bt2020},1);
  my @exp=PGSelfTestCheck::dv_vsif_payload($want);
  my @pb=@{$vsif->{pb} || []};
  my ($i)=grep { !defined($pb[$_]) || $pb[$_] != $exp[$_] } (0..$#exp);
  my $ok=($vsif->{oui} eq $want->{oui} && $vsif->{length} == $want->{length} && @pb == @exp && !defined($i)) ? 1 : 0;
  $got.=sprintf(", PB%d 0x%02x instead of 0x%02x",$i+1,$pb[$i] // 0,$exp[$i]) if(defined($i) && $i > 4);
- $got.=" (vc4.ko without the VSIF patch: reboot after the update)" if(!$ok && !$module_forms);
+ $got.=" (vc4.ko without the VSIF patch: reboot after the update)" if(!$ok && $needs_patch && defined($module_forms) && !$module_forms);
  add_check($entry,"Dolby Vision VSIF form",$want->{form}.": ".PGSelfTestCheck::dv_vsif_describe($want).", PB6 and up 0",$got,$ok);
 }
 
@@ -440,7 +441,7 @@ sub infoframe_checks {
    add_check($entry,"AVI colorimetry","per the settings","not verified (settings unreadable)",0,1);
    $entry->{unverified}=1;
   } else {
-   my $want=PGSelfTestCheck::avi_colorimetry_expect($mode,$format,$conf->{colorimetry});
+   my $want=PGSelfTestCheck::avi_colorimetry_expect($mode,$format,$conf->{colorimetry},$sc->{config}{dv_transport});
    add_check($entry,"AVI colorimetry",PGSelfTestCheck::colorimetry_name(@$want),PGSelfTestCheck::colorimetry_name($avi->{C},$avi->{EC}),
              $avi->{C} == $want->[0] && ($want->[0] != 3 || $avi->{EC} == $want->[1]));
   }
@@ -841,7 +842,7 @@ for(my $n=0;$n<@scenarios;$n++) {
   my ($capcode,$caps)=&http_json("GET","/api/capabilities");
   &dv_vsif_form_check($entry,$sc,$conf,$vsif,scalar(&vc4_dv_vsif_forms()),($capcode == 200 && ref($caps) eq "HASH") ? $caps : undef);
  }
- $sc->{matrix}=%$conf ? PGSelfTestCheck::ycc_matrix_for(@{PGSelfTestCheck::avi_colorimetry_expect($sc->{config}{signal_mode},$format,$conf->{colorimetry})},$h) : "";
+ $sc->{matrix}=%$conf ? PGSelfTestCheck::ycc_matrix_for(@{PGSelfTestCheck::avi_colorimetry_expect($sc->{config}{signal_mode},$format,$conf->{colorimetry},$sc->{config}{dv_transport})},$h) : "";
  &infoframe_checks($entry,$sc,$format,$conf,\@avi,&dri_state(),$sc->{drm} ? &sudo_cmd("HDMI_PACKET",7) : "",$avi_unread);
 
  # A framebuffer the probe cannot decode fails as a check of its own, so the

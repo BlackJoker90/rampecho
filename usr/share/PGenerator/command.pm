@@ -401,16 +401,11 @@ sub conf_after_helper_writes(@) {
  return %after;
 }
 
-# The Dolby Vision VSIF form for the display's VSVDB (PGEdidDolby block), as
-# pitpgd 2.0.3 picks it (edid_sink_caps, dv_vsif_build): standard DV as the
-# HDMI 1.4b VSIF with PB4/PB5 0 for a v0 block (length byte 0x19) or a v1
-# block of 15 bytes (0x0e), "1"; the Dolby VSIF 81 01 1B | 46 D0 00 | 02 for
-# any other block, "2". Low latency as PGenerator 1.6 sends it, PB5 0
-# (dv_ll_bt2020 stays empty: pitpgd's PB5 0x10 is not taken over).
-# Without a block both are empty and the kernel sends its own form.
-# drm_override.so hands them to the patched vc4.ko (dovi_vsif_marker).
-# The rule lives in PGEdidDolby::dolby_vsif_form, which the self-test
-# checks the conf against.
+# The Dolby Vision VSIF form (PGEdidDolby::dolby_vsif_form): both keys stay
+# empty so drm_override.so leaves the kernel's own VSIF intact (Standard DV:
+# HDMI 1.4b with PB4 0x20 / PB5 0x01 as Murideo SIX-G and PGenerator 1.6;
+# Low Latency: Dolby VSIF PB4 0x03 / PB5 0x00 as PGenerator 1.6), and any
+# leftover dv_vsif_form / dv_ll_bt2020 from an older conf is deleted.
 sub dv_vsif_conf_for_vsvdb(@) {
  require PGEdidDolby;
  return PGEdidDolby::dolby_vsif_form(shift);
@@ -563,7 +558,7 @@ sub normalize_dv_transport_conf(@) {
   dv_ll_bt2020=>$ll_bt2020,
   dv_color_space=>"0",
   color_format=>$ll_rgb ? "0" : &pg_dv_transport_color_format($dv_transport),
-  colorimetry=>"9",
+  colorimetry=>&pg_dv_transport_colorimetry($dv_transport),
   max_bpc=>$ll_rgb ? &dv_ll_rgb_bpc() : &pg_dv_transport_max_bpc($dv_transport),
   rgb_quant_range=>&dv_transport_rgb_quant_range()
  );
@@ -857,8 +852,9 @@ sub apply_drm_properties (@) {
  # Set colorimetry / colorspace.
  # Older vc4 exposes "Colorimetry" while Bookworm exposes "Colorspace".
  my $colorimetry=$pgenerator_conf{"colorimetry"};
- $colorimetry=9 if($is_dv);
- if($colorimetry ne "" && $colorimetry > 0) {
+ my $is_std_dv=($is_dv && &dv_standard_link_conf()) ? 1 : 0;
+ $colorimetry=$is_std_dv ? 0 : 9 if($is_dv);
+ if($colorimetry ne "" && ($colorimetry > 0 || $is_std_dv)) {
   my $colorspace=&map_kms_colorspace($colorimetry,$color_fmt);
   # The legacy Pi4 Colorimetry property uses the same signal-format specific
   # enums as the newer Colorspace property.

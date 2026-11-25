@@ -409,8 +409,9 @@ sub signal_dv_vsif_form_difference {
  return "" if($frame->{oui} eq $want->{oui} && $frame->{length} == $want->{length} && @pb == @exp && !defined($i));
  my $got=PGSelfTestCheck::dv_vsif_describe($frame);
  $got.=sprintf(", PB%d 0x%02x instead of 0x%02x",$i+1,$pb[$i] // 0,$exp[$i]) if(defined($i) && $i > 4);
- return "Dolby Vision is sent with the vendor infoframe $got; the display's Dolby Vision block asks for the $want->{form} (".PGSelfTestCheck::dv_vsif_describe($want).", PB6 and up 0)."
-  .((defined($module_forms) && !$module_forms) ? " The loaded vc4 driver cannot send it: reboot after the update." : "");
+ my $needs_patch=(($want->{form} // "") !~ /kernel/) ? 1 : 0;
+ return "Dolby Vision is sent with the vendor infoframe $got; expected the $want->{form} (".PGSelfTestCheck::dv_vsif_describe($want).", PB6 and up 0)."
+  .(($needs_patch && defined($module_forms) && !$module_forms) ? " The loaded vc4 driver cannot send it: reboot after the update." : "");
 }
 
 # What is on the cable, from the AVI and DRM infoframes of the last modeset

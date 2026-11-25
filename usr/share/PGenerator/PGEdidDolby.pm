@@ -149,36 +149,20 @@ sub dolby_vsvdb_json {
  return "{".join(",",@f)."}";
 }
 
-# The Dolby Vision VSIF form for a VSVDB (a block from dolby_vsvdb_parse, or
-# the same keys decoded from dolby_vsvdb_json), as pitpgd 2.0.3 picks it
-# (edid_sink_caps, dv_vsif_build): standard DV as the HDMI 1.4b VSIF with
-# PB4/PB5 0 for a v0 block (length byte 0x19) or a v1 block of 15 bytes
-# (0x0e), "1"; the Dolby VSIF 81 01 1B | 46 D0 00 | 02 for any other block,
-# "2". Amlogic's driver (CoreELEC linux-amlogic 4.9-20, hdmi_tx_main.c
-# hdmitx_set_vsif_pkt; its EDID parser hdmi_tx_edid.c cites DV spec 2.9 for
-# the VSVDB layout) picks the same, except H14b for a v1-12 block without
-# low latency and HDMI_VIC at 4K24/25/30 and 4096x2160p24; both exceptions
-# are PiTPG's, kept (maintainer, 2026-11-09 and 2026-11-17).
-# PGenerator 1.6 sends standard DV, with 1.6's dv_interface 1 (set by a
-# client, shipped 0; 1.6 hands it to the kernel, where 1 is the HDMI 1.4b
-# layout, unlike this fork's conf: 0 standard, 1 low latency), as the
-# HDMI 1.4b VSIF with HDMI_VIC 1 (PB4 0x20, PB5 0x01) in every timing; this
-# form departs from it on purpose (maintainer, 2026-11-17). Low latency
-# stays as 1.6 sends it (PB4 0x03, PB5 0): pitpgd sets PB5 0x10 ("BT.2020
-# container") for a v2 block with interface bit 0; neither 1.6 nor Amlogic
-# (PB5 from eff_tmax_PQ_hi, aux and backlight bits, hdmi_tx_main.c) does,
-# so ll_bt2020 is always empty (maintainer, 2026-11-17). Without a block
-# the form is empty and the kernel sends its own. Returns (form,
-# ll_bt2020); the daemon writes them as dv_vsif_form / dv_ll_bt2020
-# (command.pm), the self-test checks the conf against them
-# (pgen_selftest.pl).
+# The Dolby Vision VSIF form for a VSVDB: always ("","") so drm_override.so
+# leaves the kernel's own VSIF intact without a PiTPG rewrite marker:
+#   standard DV: HDMI 1.4b VSIF (03 0C 00, length 0x18, PB4 0x20, PB5 0x01)
+#                — identical to Murideo SIX-G and PGenerator 1.6;
+#   low latency: Dolby VSIF v1.0 (46 D0 00, length 0x1b, PB4 0x03, PB5 0x00)
+#                — identical to PGenerator 1.6.
+# Earlier builds followed pitpgd 2.0.3 (Dolby VSIF PB4 0x02 for v1-12/v2 or
+# H14b PB4/PB5 0 for v0/v1-15); reverted (maintainer, 2026-11-25) to match
+# Murideo SIX-G and PGenerator 1.6 and stop inheriting PiTPG's VSIF override.
+# The daemon writes these as dv_vsif_form / dv_ll_bt2020 (command.pm), so an
+# older conf's dv_vsif_form 1/2 is cleared at the next DV start; the self-test
+# and /api/signal check the wire against this same rule.
 sub dolby_vsif_form {
- my $dv=shift;
- return ("","") if(ref($dv) ne "HASH");
- my $v=$dv->{version} // -1;
- my $len=$dv->{length} // 0;
- my $form=(($v == 0 && $len == 26) || ($v == 1 && $len == 15)) ? "1" : "2";
- return ($form,"");
+ return ("","");
 }
 
 1;

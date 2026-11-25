@@ -929,15 +929,17 @@ async function loadConfig(quiet){
  applyConfigState(loadedConfig);
 }
 
-function normalizeColorimetryValue(value,signalMode){
+function normalizeColorimetryValue(value,signalMode,dvTransport){
  const val=String(value==null?'':value);
  if(val==='2'||val==='9') return val;
- return webuiAutoColorimetryForSignalMode(signalMode);
+ if(val==='0'&&String(signalMode||'').toLowerCase()==='dv') return '0';
+ return webuiAutoColorimetryForSignalMode(signalMode,dvTransport);
 }
 
 //
 // Helper: the default Target Colourspace for a given signal mode.
-// BT.2020 (9) for HDR10 / HLG / Dolby Vision; BT.709 (2) for SDR.
+// BT.2020 (9) for HDR10 / HLG / LLDV; Default (0) for Standard Dolby Vision;
+// BT.709 (2) for SDR.
 // Used by both the user-driven signal_mode change handler and the
 // polled /api/config refresh path so the dropdown follows the
 // signal mode in both directions and stays user-editable after the
@@ -945,10 +947,20 @@ function normalizeColorimetryValue(value,signalMode){
 // persisted colorimetry, so any manual edit survives one poll
 // cycle and the server remains the source of truth).
 //
-function webuiAutoColorimetryForSignalMode(signalMode){
+function webuiAutoColorimetryForSignalMode(signalMode,dvTransport){
  const sm=String(signalMode||'').toLowerCase();
- if(sm==='hdr10'||sm==='hlg'||sm==='dv') return '9';
+ if(sm==='hdr10'||sm==='hlg') return '9';
+ if(sm==='dv') return dvTransportDefaults(dvTransport).colorimetry;
  return '2';
+}
+
+function pgSyncColorimetryDefaultOption(sm,dvTransport){
+ const colSel=document.getElementById('colorimetry');
+ if(!colSel) return;
+ const showDefault=String(sm||'').toLowerCase()==='dv'&&dvTransportDefaults(dvTransport).colorimetry==='0';
+ const colDef=colSel.querySelector('option[value="0"]');
+ if(colDef){ colDef.hidden=!showDefault; colDef.disabled=!showDefault; }
+ if(!showDefault&&colSel.value==='0') setVal('colorimetry',webuiAutoColorimetryForSignalMode(sm,dvTransport));
 }
 
 function applyConfigState(nextConfig){
@@ -1009,16 +1021,19 @@ function applyConfigState(nextConfig){
 	 if(sm==='dv'){
 	  syncDvOutputEotfState();
 	  const dvTransport=dvTransportDefaults(getVal('dv_transport'));
+	  pgSyncColorimetryDefaultOption('dv',dvTransport.dv_transport);
 	  setVal('dv_transport',dvTransport.dv_transport);
 	  // The transport sets the depth: standard DV 8 bpc, LLDV 12 bpc.
 	  setVal('max_bpc',dvTransport.max_bpc);
 	  setVal('color_format',dvTransport.color_format);
   setVal('dv_interface',dvTransport.dv_interface);
-  setVal('colorimetry','9');
+  setVal('colorimetry',dvTransport.colorimetry);
   setVal('primaries','1');
   setVal('rgb_quant_range',dvTransport.rgb_quant_range);
   applyMeterTargetGammaDefault();
   saveMeterSettings();
+ }else{
+  pgSyncColorimetryDefaultOption(sm);
  }
  updateModeVisibility();
  updateDropdowns();
@@ -1534,17 +1549,19 @@ document.getElementById('signal_mode').addEventListener('change',function(){
  const preset=PG_SIGNAL_MODE_PRESETS[sm];
  let lumaFromDisplay=false;
  if(preset){
+  pgSyncColorimetryDefaultOption(sm);
   // Format before bit depth: YCbCr 4:2:2 is 10-bit only, and updateDropdowns()
   // filters bit depths against the current format.
   ['color_format','max_bpc','rgb_quant_range','eotf','primaries'].forEach(k=>setVal(k,preset[k]));
   setVal('colorimetry',autoColorimetry);
  }else if(sm==='dv'){
   const dvTransport=dvTransportDefaults('standard');
+  pgSyncColorimetryDefaultOption('dv',dvTransport.dv_transport);
   setVal('dv_transport',dvTransport.dv_transport);
   setVal('dv_interface',dvTransport.dv_interface);
   setVal('eotf','2');
   setVal('color_format',dvTransport.color_format);
-  setVal('colorimetry',autoColorimetry);
+  setVal('colorimetry',dvTransport.colorimetry);
   setVal('primaries','1');
   setVal('max_bpc',dvTransport.max_bpc);
   setVal('rgb_quant_range',dvTransport.rgb_quant_range);
@@ -1585,11 +1602,14 @@ document.getElementById('signal_mode').addEventListener('change',function(){
 document.getElementById('dv_transport').addEventListener('change',function(){
  if(getVal('signal_mode')!=='dv') return;
  const dvTransport=dvTransportDefaults(this.value);
+ pgSyncColorimetryDefaultOption('dv',dvTransport.dv_transport);
  setVal('dv_interface',dvTransport.dv_interface);
  setVal('color_format',dvTransport.color_format);
+ setVal('colorimetry',dvTransport.colorimetry);
  setVal('max_bpc',dvTransport.max_bpc);
  setVal('rgb_quant_range',dvTransport.rgb_quant_range);
  uiEnforceQuantRangeForColorFormat();
+ updateDropdowns();
  checkSettingsChanged();
 });
 
@@ -2010,6 +2030,7 @@ function pgSignalWhyNot(modeIdx,fmt,bpc){
 // Update the dropdowns: options that cannot go out stay visible, locked
 // with the reason.
 function updateDropdowns(){
+ pgSyncColorimetryDefaultOption(getVal('signal_mode'),getVal('dv_transport'));
  if(!caps||!modes.length)return;
  const modeIdx=getVal('mode_idx');
  const curBpc=parseInt(getVal('max_bpc'))||8;
@@ -2061,7 +2082,8 @@ function updateDropdowns(){
   // What Dolby Vision fixes is shown fixed, not left editable and then
   // overwritten on Apply (applySettings sends these values in DV).
   const colSel=document.getElementById('colorimetry');
-  setVal('colorimetry','9');
+  pgSyncColorimetryDefaultOption('dv',dvTransport.dv_transport);
+  setVal('colorimetry',dvTransport.colorimetry);
   pgDvLockFields([fmtSel,rngSel,colSel,bpcSel],dvTransport);
   // The platform DV transport uses its configured TMDS bandwidth.
   const maxTmds=(caps&&caps.max_tmds)?caps.max_tmds*1000:600000;
@@ -2086,6 +2108,7 @@ function updateDropdowns(){
   return;
  }
  pgDvLockFields([],null);
+ pgSyncColorimetryDefaultOption(sm);
  // Non-DV: re-enable all mode options
  Array.from(modeSel.options).forEach(function(o){pgSetModeOptionUnavailable(o,modes.find(x=>String(x.idx)===o.value),'');});
  // Re-enable all range options
@@ -3690,16 +3713,16 @@ function pgDvLockFields(sels,dvTransport){
  if(!sels.length||!dvTransport){ note.hidden=true; note.textContent=''; return; }
  note.textContent=dvTransport.dv_transport==='lldv'
   ?'Set by Dolby Vision Low Latency: YCbCr 4:2:2, 12-bit, Limited range, BT.2020.'
-  :'Set by Dolby Vision Standard: 8-bit RGB carrying the 12-bit picture, Full range, BT.2020.';
+  :'Set by Dolby Vision Standard: 8-bit RGB carrying the 12-bit picture, Full range, Default AVI colorimetry.';
  note.hidden=false;
 }
 
 function dvTransportDefaults(mode){
  if(String(mode||'').toLowerCase()==='lldv'){
   // Low-latency (source-led) DV: PQ YCbCr 4:2:2 12-bit limited range, LL bit in the VSIF.
-  return {dv_transport:'lldv',is_ll_dovi:'1',is_std_dovi:'0',dv_interface:'1',color_format:'2',max_bpc:'12',rgb_quant_range:'1'};
+  return {dv_transport:'lldv',is_ll_dovi:'1',is_std_dovi:'0',dv_interface:'1',color_format:'2',max_bpc:'12',rgb_quant_range:'1',colorimetry:'9'};
  }
- return {dv_transport:'standard',is_ll_dovi:'0',is_std_dovi:'1',dv_interface:'0',color_format:'0',max_bpc:'8',rgb_quant_range:'2'};
+ return {dv_transport:'standard',is_ll_dovi:'0',is_std_dovi:'1',dv_interface:'0',color_format:'0',max_bpc:'8',rgb_quant_range:'2',colorimetry:'0'};
 }
 
 async function resetDefaults(){
@@ -3815,7 +3838,7 @@ async function applySettings(){
 	  Object.assign(changes,{is_sdr:'0',is_hdr:'1',
 	   dv_transport:dvTransport.dv_transport,
 	   is_ll_dovi:dvTransport.is_ll_dovi,is_std_dovi:dvTransport.is_std_dovi,
-   dv_status:'1',primaries:'1',color_format:dvTransport.color_format,colorimetry:'9',
+   dv_status:'1',primaries:'1',color_format:dvTransport.color_format,colorimetry:dvTransport.colorimetry,
    max_bpc:dvTransport.max_bpc,
    rgb_quant_range:dvTransport.rgb_quant_range,eotf:'2',
    dv_interface:dvTransport.dv_interface,
@@ -25100,12 +25123,18 @@ function pgPresetSettingsNow(){
 function pgPresetBpc(s){
  return String(s.signal_mode||'')==='dv'?dvTransportDefaults(s.dv_transport).max_bpc:String(s.max_bpc||'');
 }
+// The colorimetry a preset puts on the cable: in Dolby Vision the transport's
+// (a preset saved up to 3.0.6 may hold 9 for Standard, which now sends 0).
+function pgPresetColorimetry(s){
+ return String(s.signal_mode||'')==='dv'?dvTransportDefaults(s.dv_transport).colorimetry:String(s.colorimetry||'');
+}
 // The preset's values the fields could not take (this display or mode).
 function pgPresetMissedKeys(s,mode){
  return PG_PRESET_ORDER.filter(key=>{
   if(s[key]==null) return false;
   const el=pgPresetFieldEl(key,mode);
-  return el&&String(el.value)!==(key==='max_bpc'?pgPresetBpc(s):String(s[key]));
+  const want=key==='max_bpc'?pgPresetBpc(s):(key==='colorimetry'?pgPresetColorimetry(s):String(s[key]));
+  return el&&String(el.value)!==want;
  });
 }
 // Chips: what the preset puts on the cable, in the order of the header.
@@ -25149,6 +25178,7 @@ function pgPresetActiveId(){
    if(k==='mode_label') return true;
    if(k==='mode_idx') return s.mode_label?now.mode_label===s.mode_label:String(now.mode_idx)===String(s.mode_idx);
    if(k==='max_bpc') return String(now[k])===pgPresetBpc(s);
+   if(k==='colorimetry') return String(now[k])===pgPresetColorimetry(s);
    return String(now[k])===String(s[k]);
   });
  });

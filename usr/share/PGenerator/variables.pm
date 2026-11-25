@@ -135,6 +135,15 @@ sub pg_dv_transport_quant_range(@) {
  return (&pg_dv_transport_mode(@_) eq "lldv") ? "1" : "2";
 }
 
+# Standard DV tunnels 12-bit Y'CbCr inside an 8-bit RGB link and carries its
+# colour matrix in the embedded Dolby Vision DM packet. Sending AVI BT.2020
+# (colorimetry 9, C=3 EC=6) made LG sinks apply a BT.709->BT.2020 shift
+# against Murideo SIX-G; Murideo SIX-G and PGenerator 1.6 send Default (C=0)
+# for Standard DV, while LLDV sends BT.2020 (9 -> 10 on YCbCr 4:2:2).
+sub pg_dv_transport_colorimetry(@) {
+ return (&pg_dv_transport_mode(@_) eq "lldv") ? "9" : "0";
+}
+
 sub pg_dv_transport_max_bpc(@) {
  return "12" if(&pg_dv_transport_mode(@_) eq "lldv");
  foreach my $candidate (@_) {

@@ -10970,6 +10970,7 @@ sub webui_config_json (@) {
   $json_conf{"is_ll_dovi"}=&pg_dv_transport_ll_flag($json_dv_transport);
   $json_conf{"is_std_dovi"}=&pg_dv_transport_std_flag($json_dv_transport);
   $json_conf{"dv_interface"}=&pg_dv_transport_interface($json_dv_transport);
+  $json_conf{"colorimetry"}=&pg_dv_transport_colorimetry($json_dv_transport);
   # Low latency in RGB (a PiTPG session, dv_ll_rgb 1) goes out in the
   # conf's own format and depth, not the transport's 4:2:2 12-bit.
   if(($json_conf{"dv_ll_rgb"} // "") ne "1") {
@@ -11354,7 +11355,7 @@ sub webui_apply_config (@) {
    $changes{"primaries"}="2" if(!$pitpg);
    $changes{"max_bpc"}=&pg_dv_transport_max_bpc($requested_dv_transport, $changes{"max_bpc"} || $pgenerator_conf{"max_bpc"}) if(!$pitpg_ll_rgb);
    $changes{"color_format"}=&pg_dv_transport_color_format($requested_dv_transport) if(!$pitpg_ll_rgb);
-   $changes{"colorimetry"}="9";
+   $changes{"colorimetry"}=&pg_dv_transport_colorimetry($requested_dv_transport);
    $changes{"rgb_quant_range"}=&pg_dv_transport_quant_range($requested_dv_transport) if(!$pitpg_ll_rgb);
   }
  }
@@ -11502,7 +11503,7 @@ sub webui_apply_config (@) {
   $changes{"is_std_dovi"}=&pg_dv_transport_std_flag($dv_transport);
   $changes{"dv_status"}="1";
   $changes{"color_format"}=&pg_dv_transport_color_format($dv_transport) if(!$pitpg_ll_rgb);
-  $changes{"colorimetry"}="9";
+  $changes{"colorimetry"}=&pg_dv_transport_colorimetry($dv_transport);
   $changes{"eotf"}="2";
   $changes{"primaries"}="2" if(!$pitpg);
   $changes{"rgb_quant_range"}=&pg_dv_transport_quant_range($dv_transport) if(!$pitpg_ll_rgb);
@@ -11569,16 +11570,25 @@ sub webui_apply_config (@) {
  }
  my @adjusted=();
  push(@adjusted,$pre_dv_not_back) if($pre_dv_not_back ne "");
- # HDR10, HLG and DV are BT.2020 signals (normalize_signal_mode_conf does
- # the same on every renderer start): the colorimetry is 9 in them. A
- # posted 10 (BT2020_YCC) is the same on the wire (drm_override maps 9 to
- # 10 for YCbCr), so only another posted value is reported.
+ # HDR10, HLG and Low Latency DV are BT.2020 signals (colorimetry 9);
+ # Standard DV tunnels 12-bit Y'CbCr inside 8-bit RGB with Default AVI
+ # colorimetry (0, C=0), matching Murideo SIX-G and PGenerator 1.6. A posted
+ # 10 (BT2020_YCC) in HDR10/HLG/LLDV is the same on the wire (drm_override
+ # maps 9 to 10 for YCbCr), so only another posted value is reported.
  my $effective_colorimetry=defined $changes{"colorimetry"} ? $changes{"colorimetry"} : ($pgenerator_conf{"colorimetry"} // "");
  # Judged on the flags the renderer reads, not the signal_mode text (an
  # empty one passes validation and is not derived again).
+ my $std_dv_after=($dv_on && &pg_dv_transport_mode($effective{"dv_transport"} || $requested_dv_transport) eq "standard") ? 1 : 0;
  my $hdr_after=int(defined $changes{"is_hdr"} ? $changes{"is_hdr"} : ($pgenerator_conf{"is_hdr"} || 0)) == 1 || $dv_on;
- if($hdr_after) {
-  push(@adjusted,"HDR10, HLG and Dolby Vision are sent as BT.2020.")
+ if($std_dv_after) {
+  push(@adjusted,"Standard Dolby Vision is sent with Default AVI colorimetry (C=0).")
+   if(defined $posted{"colorimetry"} && $posted{"colorimetry"} ne "" && $posted{"colorimetry"} ne "0");
+  if($effective_colorimetry ne "0") {
+   $changes{"colorimetry"}="0";
+   $effective_colorimetry="0";
+  }
+ } elsif($hdr_after) {
+  push(@adjusted,"HDR10, HLG and Low Latency Dolby Vision are sent as BT.2020.")
    if(defined $posted{"colorimetry"} && $posted{"colorimetry"} ne "" && $posted{"colorimetry"} ne "9" && $posted{"colorimetry"} ne "10");
   if($effective_colorimetry ne "9") {
    $changes{"colorimetry"}="9";

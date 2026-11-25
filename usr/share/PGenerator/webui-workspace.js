@@ -3204,7 +3204,7 @@ function meterLgAutoCalTransportReady(){
    && getVal('max_bpc')==='8'
    && getVal('color_format')==='0'
    && getVal('rgb_quant_range')==='2'
-   && getVal('colorimetry')==='9'
+   && getVal('colorimetry')==='0'
    && getVal('primaries')==='1'
    && getVal('eotf')==='2';
  }
@@ -3231,7 +3231,7 @@ function meterSetLgAutoCalTransportValues(){
  if(requested==='dv'){
   setVal('eotf','2');
   setVal('primaries','1');
-  setVal('colorimetry','9');
+  setVal('colorimetry','0');
   setVal('max_bpc','8');
   setVal('color_format','0');
   setVal('rgb_quant_range','2');
@@ -3242,7 +3242,7 @@ function meterSetLgAutoCalTransportValues(){
   setVal('max_bpc','8');
   setVal('color_format','0');
   setVal('rgb_quant_range','2');
-  setVal('colorimetry','9');
+  setVal('colorimetry','0');
   setVal('eotf','2');
   setVal('primaries','1');
   checkSettingsChanged();

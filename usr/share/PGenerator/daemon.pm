@@ -2237,6 +2237,7 @@ sub pattern_daemon {
 	      # entry would win and the conf would still look like HDR).
 	      if($calman_dv_transition_active) {
 	       $want_signal_mode="dv";
+	       $want_colorimetry="0";
 	      }
 	      my @coherence_writes=(
 	       ["signal_mode",$want_signal_mode],
@@ -2374,13 +2375,18 @@ sub pattern_daemon {
 	      # never exited: it spun replaying SPECIALTY:ALIGNMENT
 	      # forever and starved the GCI socket of RGB_S / 100% /
 	      # 109% pattern commands (DV Autocal stuck on alignment).
-	      # HDR10/HLG/DV are BT.2020 signals: a gamut or colour-space
-	      # command (PRIM, CLSP, CONF_HDR with BT.709 primaries) does not
-	      # turn the colorimetry to BT.709 while HDR is on. The renderer
-	      # takes it with the next in-place reload or restart (and hands
-	      # it to drm_override), so it would reach the wire.
-	      # Calman's mode switches write is_hdr before the colorimetry.
-	      $conf_val="9" if($conf_key eq "colorimetry" && int($pgenerator_conf{"is_hdr"} || 0) == 1);
+	      # HDR10/HLG and LLDV are BT.2020 signals (9); Standard DV tunnels
+	      # 12-bit Y'CbCr inside 8-bit RGB with Default AVI colorimetry (0).
+	      # A gamut or colour-space command (PRIM, CLSP, CONF_HDR with BT.709
+	      # primaries) must not turn the colorimetry to BT.709 while HDR/DV is
+	      # on. Calman's mode switches write is_hdr / dv_status before colorimetry.
+	      if($conf_key eq "colorimetry") {
+	       if($calman_dv_transition_active || &dv_standard_link_conf()) {
+	        $conf_val="0";
+	       } elsif(int($pgenerator_conf{"is_hdr"} || 0) == 1) {
+	        $conf_val="9";
+	       }
+	      }
 	      my $new_val=defined($conf_val) ? "$conf_val" : "";
 	      my $cur_val=defined($pgenerator_conf{$conf_key}) ? "$pgenerator_conf{$conf_key}" : "";
 	      if($cur_val eq $new_val) {
@@ -2498,7 +2504,7 @@ sub pattern_daemon {
       $calman_save_setting->("dv_interface",&pg_dv_transport_interface($dv_transport));
       $calman_save_setting->("dv_color_space","0");
 	      $calman_save_setting->("color_format",&pg_dv_transport_color_format($dv_transport));
-	      $calman_save_setting->("colorimetry","9");
+	      $calman_save_setting->("colorimetry",&pg_dv_transport_colorimetry($dv_transport));
 	      $calman_save_setting->("primaries","1");
 	      $calman_save_setting->("max_bpc",$calman_preferred_bpc->(&pg_dv_transport_max_bpc($dv_transport)));
 	      $calman_save_setting->("rgb_quant_range",&pg_dv_transport_quant_range($dv_transport));
@@ -2821,7 +2827,7 @@ sub pattern_daemon {
      $calman_save_setting->("dv_interface",&pg_dv_transport_interface($dv_transport));
      $calman_save_setting->("dv_color_space","0");
 	     $calman_save_setting->("color_format",&pg_dv_transport_color_format($dv_transport));
-	     $calman_save_setting->("colorimetry","9");
+	     $calman_save_setting->("colorimetry",&pg_dv_transport_colorimetry($dv_transport));
 	     $calman_save_setting->("primaries","1");
 	     $calman_save_setting->("max_bpc",$calman_preferred_bpc->(&pg_dv_transport_max_bpc($dv_transport)));
 	     $calman_save_setting->("rgb_quant_range",&pg_dv_transport_quant_range($dv_transport));

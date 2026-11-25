@@ -275,14 +275,21 @@ sub colorimetry_name {
 }
 
 # Expected AVI [C, EC] for a signal mode, link format ("RGB",
-# "YCbCr 4:4:4", "YCbCr 4:2:2") and the conf colorimetry (Colorspace
-# property value). HDR10, HLG and both Dolby Vision transports are
-# BT.2020 (the renderer sets BT2020_RGB/_YCC; standard DV keeps the conf
-# value, which the daemon pins to 9 in DV).
+# "YCbCr 4:4:4", "YCbCr 4:2:2"), conf colorimetry (Colorspace property value)
+# and optional DV transport ("standard" / "lldv"). HDR10, HLG and Low Latency
+# DV are BT.2020 (C=3 EC=6); Standard DV tunnels 12-bit Y'CbCr inside 8-bit
+# RGB with Default AVI colorimetry (C=0, matching Murideo SIX-G and
+# PGenerator 1.6).
 sub avi_colorimetry_expect {
- my ($signal_mode,$format,$colorimetry)=@_;
+ my ($signal_mode,$format,$colorimetry,$dv_transport)=@_;
+ my $mode=lc($signal_mode || "sdr");
  my $prop;
- if(($signal_mode || "sdr") ne "sdr") {
+ if($mode eq "dv") {
+  my $is_std=(defined($dv_transport) && lc($dv_transport) eq "standard") ? 1
+           : (defined($dv_transport) && lc($dv_transport) eq "lldv") ? 0
+           : (($format || "") eq "RGB" && (!defined($colorimetry) || "$colorimetry" eq "0")) ? 1 : 0;
+  $prop=$is_std ? 0 : 9;
+ } elsif($mode ne "sdr") {
   $prop=9;
  } else {
   $prop=(defined($colorimetry) && "$colorimetry"=~/^\d+$/) ? int($colorimetry) : 0;
