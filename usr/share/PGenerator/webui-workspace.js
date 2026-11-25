@@ -18734,7 +18734,7 @@ function meterHcfrPreferenceModel(mode,white,black){
  // BT.2020 UHDTV signal. PGenerator stores those as two independent controls,
  // so derive the HCFR standard from output colorimetry + analysis target.
  const outputColorimetry=text('colorimetry','').toLowerCase();
- const outputIsBt2020=outputColorimetry==='9'||outputColorimetry.includes('2020');
+ const outputIsBt2020=mode==='dv'||mode==='hdr10'||mode==='hlg'||outputColorimetry==='9'||outputColorimetry.includes('2020');
  const outputIsP3=outputColorimetry.includes('p3');
  let colorStandard=mode==='sdr'?2:7;
  if(gamut==='bt709') colorStandard=2;

@@ -2914,7 +2914,7 @@ sub pgenerator_cmd (@) {
   }
   if(($conf_key eq "dv_status" && $conf_value eq "1") ||
      ($conf_key=~/^(is_ll_dovi|is_std_dovi)$/ && $conf_value eq "1") ||
-     ($conf_key=~/^(max_bpc|color_format|rgb_quant_range|dv_interface|dv_transport)$/ && int($pgenerator_conf{"dv_status"} || 0) == 1)) {
+     ($conf_key=~/^(max_bpc|color_format|rgb_quant_range|colorimetry|dv_interface|dv_transport)$/ && int($pgenerator_conf{"dv_status"} || 0) == 1)) {
    &normalize_dv_transport_conf();
   }
   # $conf_key, not $1: the dv_status match above has no group and resets $1.

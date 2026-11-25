@@ -25304,11 +25304,12 @@ function pgPresetLoad(id){
  const mode=s.signal_mode||getVal('signal_mode');
  window.pgPresetLoading=true;
  try{
+ pgSyncColorimetryDefaultOption(mode,s.dv_transport!=null?s.dv_transport:getVal('dv_transport'));
  PG_PRESET_ORDER.forEach(key=>{
   if(s[key]==null) return;
   const el=pgPresetFieldEl(key,mode);
   if(!el) return;
-  const v=String(s[key]);
+  const v=key==='max_bpc'?pgPresetBpc(s):(key==='colorimetry'?pgPresetColorimetry(s):String(s[key]));
   if(el.tagName==='SELECT'){
    const o=Array.from(el.options).find(x=>x.value===v);
    if(!o||o.disabled||el.value===v) return;
