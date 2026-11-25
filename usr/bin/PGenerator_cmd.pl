@@ -647,12 +647,8 @@ sub wifi_ap_apply_conf (@) {
  return print "ERR:hostapd not installed" if(!&pgen_cmd_exists($hostapd_bin) && !&pgen_service_exists("hostapd.service"));
  my $interface=&hostapd_conf_value("interface","wlan0");
  &update_hostapd_conf($ssid,$password,$interface);
- my $restart=&wifi_ap_enable_impl("wlan0");
- if($restart !~ /^OK/) {
-  print $restart;
- } else {
-  print "OK";
- }
+ # "OK", with a warning line when the AP's DHCP server is not answering.
+ print &wifi_ap_enable_impl("wlan0");
 }
 
 sub wifi_ap_status (@) {
@@ -679,6 +675,116 @@ sub wifi_ap_status (@) {
  print "DNSMASQ_ACTIVE=$dnsmasq_active\n";
 }
 
+# dhcpd (/etc/init.d/dhcp) binds the interfaces of its list that are up
+# when it starts and never takes one in later. A dhcpd started while the
+# radio was off (the boot applies a persisted wifi_radio=0 before it
+# starts dhcpd; Bluetooth and the USB gadget restart it at any time) has
+# no socket on ap0: clients then join the AP and get no address (read on
+# the Pi 4 2026-11-25: DHCP requests on ap0, no reply, dhcpd's packet
+# sockets on usb0 and bnep only). Taking an interface down and up again
+# under a running dhcpd keeps its socket. Set at compile time: the actions
+# at the top of this file run before the statements down here.
+BEGIN {
+ $dhcpd_init_script="/etc/init.d/dhcp";
+ $dhcpd_default_file="/etc/default/dhcp";
+ $dhcpd_pid_file="/var/run/dhcpd.pid";
+ $dhcpd_proc_root="/proc";
+ $dhcpd_sys_net="/sys/class/net";
+}
+
+# Does the running dhcpd hold a packet socket on this interface? 1 yes,
+# 0 no (also: no dhcpd, or something unreadable).
+sub dhcpd_serves_interface(@) {
+ my $interface=shift;
+ return 0 if(!defined $interface || $interface!~/^[A-Za-z0-9_.-]+$/);
+ my $ifindex="";
+ if(open(my $fh,"<","$dhcpd_sys_net/$interface/ifindex")) { $ifindex=<$fh>; close($fh); }
+ return 0 if(!defined $ifindex || $ifindex!~/^\s*(\d+)\s*$/);
+ $ifindex=$1;
+ my $pid="";
+ if(open(my $fh,"<",$dhcpd_pid_file)) { $pid=<$fh>; close($fh); }
+ return 0 if(!defined $pid || $pid!~/^\s*(\d+)\s*$/);
+ $pid=$1;
+ my %inode;
+ opendir(my $dh,"$dhcpd_proc_root/$pid/fd") or return 0;
+ foreach my $fd (readdir($dh)) {
+  next if($fd!~/^\d+$/);
+  my $target=readlink("$dhcpd_proc_root/$pid/fd/$fd");
+  $inode{$1}=1 if(defined $target && $target=~/^socket:\[(\d+)\]$/);
+ }
+ closedir($dh);
+ return 0 if(!%inode);
+ open(my $ph,"<","$dhcpd_proc_root/net/packet") or return 0;
+ my $serves=0;
+ while(my $line=<$ph>) {
+  # sk RefCnt Type Proto Iface R Rmem User Inode
+  my @f=split(' ',$line);
+  next if(@f<9 || $f[8]!~/^\d+$/);
+  if($f[4] eq $ifindex && $inode{$f[8]}) { $serves=1; last; }
+ }
+ close($ph);
+ return $serves;
+}
+
+# Is the interface in dhcpd's list (DAEMON_ARGUMENT of /etc/default/dhcp,
+# the init script's default when it is not set)?
+sub dhcpd_lists_interface(@) {
+ my $interface=shift;
+ my $default="bnep ap0 usb0";
+ my $list=$default;
+ if(open(my $fh,"<",$dhcpd_default_file)) {
+  while(my $line=<$fh>) {
+   next if($line!~/^\s*DAEMON_ARGUMENT=(.*?)\s*$/);
+   my $value=$1;
+   $value=$1 if($value=~/^"(.*)"$/ || $value=~/^'(.*)'$/);
+   $list=$value;
+  }
+  close($fh);
+ }
+ # The init script: ${DAEMON_ARGUMENT:="bnep ap0 usb0"}, also when empty.
+ $list=$default if($list!~/\S/);
+ return (grep { $_ eq $interface } split(' ',$list)) ? 1 : 0;
+}
+
+# Is the interface administratively up (IFF_UP in its sysfs flags)?
+sub wifi_interface_up(@) {
+ my $interface=shift;
+ return 0 if(!defined $interface || $interface!~/^[A-Za-z0-9_.-]+$/);
+ my $flags="";
+ if(open(my $fh,"<","$dhcpd_sys_net/$interface/flags")) { $flags=<$fh>; close($fh); }
+ return 0 if(!defined $flags || $flags!~/^\s*(0x[0-9a-fA-F]+)\s*$/);
+ return (hex($1) & 1) ? 1 : 0;
+}
+
+# After the AP came up: make dhcpd serve it. "" when it does (or dhcpd is
+# not this system's AP DHCP server), else a warning for the user: the AP
+# itself is up, so the caller still answers OK and keeps its state.
+sub wifi_ap_dhcpd_follow(@) {
+ my $interface=shift;
+ return "" if(!-x $dhcpd_init_script || !&dhcpd_lists_interface($interface));
+ # Where dnsmasq is installed, configure_dnsmasq_ap made it the AP's DHCP
+ # server (the Pi 5 image ships it; the Pi 4 image does not).
+ return "" if(defined $dnsmasq_bin && &pgen_cmd_exists($dnsmasq_bin));
+ return "" if(&dhcpd_serves_interface($interface));
+ &pgen_system_quiet($dhcpd_init_script,"restart");
+ # The init script starts dhcpd in the background; it writes its pid
+ # file and opens its sockets a moment later.
+ for(my $i=0;$i<30;$i++) {
+  return "" if(&dhcpd_serves_interface($interface));
+  select(undef,undef,undef,0.1);
+ }
+ return "The access point is up, but its DHCP server does not answer on $interface: devices that join get no address.";
+}
+
+# "OK", plus a warning line when the AP's DHCP server could not be made to
+# serve it (the WebUI matches ^OK and shows the warning).
+sub wifi_ap_ok_response(@) {
+ my $warning=shift;
+ return "OK" if(!defined $warning || $warning eq "");
+ $warning=~s/[\r\n]+/ /g;
+ return "OK\nwarning=$warning";
+}
+
 sub wifi_ap_enable_impl (@) {
  # The caller names the interface: under WIFI_AP_APPLYCONF $ARGV[1] is the SSID.
  my $base_interface=$_[0] || "wlan0";
@@ -691,11 +797,8 @@ sub wifi_ap_enable_impl (@) {
  &configure_dnsmasq_ap($ap_interface,$ap_net);
  my $start=&pgen_service_action($hostapd_init,"hostapd","restart");
  &wifi_ap_ensure_gateway($ap_interface,$ap_net);
- if($start!=0) {
-  return "ERR:hostapd failed to start";
- } else {
-  return "OK";
- }
+ return "ERR:hostapd failed to start" if($start!=0);
+ return &wifi_ap_ok_response(&wifi_ap_dhcpd_follow($ap_interface));
 }
 
 sub wifi_ap_enable (@) {
@@ -845,6 +948,15 @@ sub wifi_radio (@) {
  }
  return print "ERR:no rfkill control available" if(!$did);
  &pgen_system_quiet($ip,"link","set","wlan0","up") if($val eq "on" && defined $ip && &pgen_cmd_exists($ip));
+ # A hostapd that kept running while the radio was blocked (the boot
+ # blocks a persisted wifi_radio=0 and leaves hostapd to wifi_ap) brings
+ # its interface back up now, under a dhcpd that may have started without
+ # it: let dhcpd follow (Pi 4, 2026-11-25: ap0 up, no dhcpd socket on it).
+ if($val eq "on" && &pgen_process_alive("hostapd")) {
+  my $interface=&hostapd_conf_value("interface","wlan0");
+  for(my $i=0;$i<30 && !&wifi_interface_up($interface);$i++) { select(undef,undef,undef,0.1); }
+  return print &wifi_ap_ok_response(&wifi_ap_dhcpd_follow($interface)) if(&wifi_interface_up($interface));
+ }
  print $ok_response;
 }
 

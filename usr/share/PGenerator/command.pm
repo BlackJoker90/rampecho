@@ -2938,6 +2938,13 @@ sub pgenerator_cmd (@) {
  }
  if($cmd =~/SET_WIFI_AP_APPLY_CONF:(.*)/) {
   $response=wpa_cli("WIFI_AP_APPLYCONF:$1");
+  if(defined $response && $response=~/^OK/) {
+   # The AP runs now on an unblocked radio: persist it as the WebUI does
+   # (webui.pm _webui_ap_persist_running, #43). The client gets the OK
+   # alone, as before: a warning line is for the WebUI.
+   &sudo("SET_PGENERATOR_CONF_MULTI","wifi_ap","1","wifi_radio","1");
+   $response=~s/\n.*//s;
+  }
   unlink("$info_dir/GET_WIFI_STATUS.info");
   unlink("$info_dir/GET_WIFI_NET_CONFIGURED.info");
   &remove_files("$info_dir","GET_IP\-.*\.info\$");

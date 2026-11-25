@@ -13337,6 +13337,28 @@ sub webui_wifi_ap_json (@) {
  return "{\"status\":\"ok\",\"ssid\":\"$ssid\",\"password\":\"$pass\"}";
 }
 
+# The "warning=" line of an OK from the AP root actions (PGenerator_cmd.pl
+# wifi_ap_ok_response) and any further warnings, as a JSON member to
+# append: "" without one.
+sub _webui_ap_warning_json (@) {
+ my ($raw,@more)=@_;
+ my @warnings;
+ push(@warnings,$1) if(defined $raw && $raw=~/^warning=(.+)$/m);
+ push(@warnings,grep { defined $_ && $_ ne "" } @more);
+ return "" if(!@warnings);
+ return ',"warning":"'.&_webui_json_escape(join(" ",@warnings)).'"';
+}
+
+# The AP runs: persist wifi_ap=1 and wifi_radio=1 in one conf write (the
+# AP's start unblocks the radio, wifi_ap_prepare_interface). A kept
+# wifi_radio=0 made the next boot block the radio under a running hostapd,
+# and dhcpd then started without ap0 (#43). "" or a warning for the page.
+sub _webui_ap_persist_running (@) {
+ my $raw=&sudo("SET_PGENERATOR_CONF_MULTI","wifi_ap","1","wifi_radio","1");
+ return "" if(defined $raw && $raw=~/^OK/);
+ return "The access point runs, but the setting could not be saved: after a restart the WiFi radio or the access point may be off.";
+}
+
 sub webui_wifi_ap_apply (@) {
  my $body=shift;
  my $ssid=&_webui_body_string($body,"ssid");
@@ -13354,7 +13376,8 @@ sub webui_wifi_ap_apply (@) {
  my $raw=&sudo("WIFI_AP_APPLYCONF","$ssid","$pass");
  chomp($raw);
  if($raw=~/^OK/) {
-  return '{"status":"ok","message":"WiFi AP updated and restarted"}';
+  my $persist=&_webui_ap_persist_running();
+  return '{"status":"ok","message":"WiFi AP updated and restarted"'.&_webui_ap_warning_json($raw,$persist).'}';
  }
  $raw=~s/^ERR:?//;
  $raw=&_webui_json_escape($raw||"WiFi AP apply failed");
@@ -13374,8 +13397,13 @@ sub webui_wifi_ap_control (@) {
  chomp($raw);
  if($raw=~/^OK/) {
   # Persist the desired AP state so it survives reboot (issue #22).
-  &sudo("SET_PGENERATOR_CONF","wifi_ap",($action eq "enable")?"1":"0");
-  return '{"status":"ok","message":"WiFi AP '.$action.'d"}';
+  my $persist="";
+  if($action eq "enable") {
+   $persist=&_webui_ap_persist_running();
+  } else {
+   &sudo("SET_PGENERATOR_CONF","wifi_ap","0");
+  }
+  return '{"status":"ok","message":"WiFi AP '.$action.'d"'.&_webui_ap_warning_json($raw,$persist).'}';
  }
  $raw=~s/^ERR:?//;
  $raw=&_webui_json_escape($raw||"WiFi AP $action failed");
@@ -13454,7 +13482,7 @@ sub webui_wifi_radio_control (@) {
    &sudo("WIFI_AP_DISABLE");
    &sudo("SET_PGENERATOR_CONF","wifi_ap","0");
   }
-  return '{"status":"ok","message":"WiFi radio '.($enabled eq "on" ? "enabled" : "disabled").'"}';
+  return '{"status":"ok","message":"WiFi radio '.($enabled eq "on" ? "enabled" : "disabled").'"'.&_webui_ap_warning_json($raw).'}';
  }
  $raw=~s/^ERR:?//;
  $raw=&_webui_json_escape($raw||"WiFi radio change failed");

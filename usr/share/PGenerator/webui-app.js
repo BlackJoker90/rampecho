@@ -5195,8 +5195,9 @@ async function onWifiRadioToggle(el){
   }
  }
  switchBusy('wifiRadioToggle',true);
- const r=await fetchJSON('/api/wifi/radio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:enable})});
- if(r&&r.status==='ok') toast(r.message||('WiFi radio '+(enable?'enabled':'disabled')));
+ // Up to ~10 s on the Pi: dhcpd may be restarted for the AP (#43).
+ const r=await fetchJSON('/api/wifi/radio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:enable}),_timeoutMs:30000});
+ if(r&&r.status==='ok'){toast(r.message||('WiFi radio '+(enable?'enabled':'disabled')));if(r.warning)toast(r.warning,'warn');}
  else toast(pgFailMsg('Couldn\u2019t '+(enable?'turn on':'turn off')+' the WiFi radio',r),'err');
  setTimeout(()=>{loadWifiRadio();loadAP();switchBusy('wifiRadioToggle',false);},1500);
 }
@@ -5212,14 +5213,14 @@ async function applyAP(){
  if(!ssid){toast('SSID is required','err');return;}
  if(password.length<8){toast('Password must be at least 8 characters','err');return;}
  const r=await fetchJSON('/api/wifi/ap',{method:'POST',
-  headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password})});
- if(r&&r.status==='ok'){toast('AP settings saved');loadAP();}
+  headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password}),_timeoutMs:30000});
+ if(r&&r.status==='ok'){toast('AP settings saved');if(r.warning)toast(r.warning,'warn');loadAP();}
  else toast(pgFailMsg('Couldn\u2019t save the access point settings',r),'err');
 }
 
 async function controlAP(action){
- const r=await fetchJSON('/api/wifi/ap/'+action,{method:'POST'});
- if(r&&r.status==='ok'){toast(r.message||'AP '+action+'d');setTimeout(loadAP,1000);}
+ const r=await fetchJSON('/api/wifi/ap/'+action,{method:'POST',_timeoutMs:30000});
+ if(r&&r.status==='ok'){toast(r.message||'AP '+action+'d');if(r.warning)toast(r.warning,'warn');setTimeout(loadAP,1000);}
  else toast(r&&(r.message||r.error)?(r.message||r.error):'AP '+action+' failed','err');
 }
 
