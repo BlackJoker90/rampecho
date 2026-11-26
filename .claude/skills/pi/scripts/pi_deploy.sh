@@ -266,7 +266,7 @@ roll_back() {
  if [ $RB -eq 0 ]; then
   echo "Backup is back in place; starting the daemon."
   if start_and_wait; then echo "Daemon up (all four ports listen)."; return 0; fi
-  echo "WARNING: not all ports listen after 40 s; see $T/pgen-restart.log"; return 1
+  echo "WARNING: not all ports listen after 40 s; see $T/pgen-restart.log, /tmp/pg_stderr.log and /tmp/pgenerator_debug.log"; return 1
  fi
  if pause_for_a_day; then
   echo "WARNING: not every file is back (see above); the daemon stays stopped and the WebUI watchdog paused for a day. Fix them, then: sh $BK/restore.sh"
@@ -299,7 +299,7 @@ if [ $BAD -eq 0 ] && [ $OLD -eq 0 ]; then
  if ports_up; then
   echo "Already installed: every file is the new one. Nothing done."; pause_note; exit 0
  fi
- echo "Already installed, but the daemon does not listen on all four ports: see $T/pgen-restart.log, then restart the daemon"
+ echo "Already installed, but the daemon does not listen on all four ports: see $T/pgen-restart.log, /tmp/pg_stderr.log and /tmp/pgenerator_debug.log, then restart the daemon"
  pause_note
  exit 1
 fi
@@ -377,5 +377,5 @@ trap 'trap "" INT TERM HUP QUIT; [ $STARTED -eq 1 ] || start_daemon; rm -f $PAUS
 echo "$LIST" | grep -q '\.ko ' && echo "Note: a kernel module is among the files; it loads on the next reboot."
 echo "Daemon starting; waiting for ports 80, 85, 2100, 2101 ..."
 if start_and_wait; then echo "Daemon up (all four ports listen)."; exit 0; fi
-echo "WARNING: not all ports listen after 40 s; see $T/pgen-restart.log and /tmp/pgenerator_debug.log"
+echo "WARNING: not all ports listen after 40 s; see $T/pgen-restart.log, /tmp/pg_stderr.log and /tmp/pgenerator_debug.log"
 exit 1

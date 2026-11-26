@@ -789,7 +789,7 @@ def cmd_deploy(args):
 
 # --- restart / reboot / probes / wait ---------------------------------------
 
-WAIT_PORTS = r"""i=0; while [ $i -lt %d ]; do L=$( (netstat -ltn 2>/dev/null || ss -ltn 2>/dev/null) ); ok=1; for p in 80 85 2100 2101; do echo "$L" | grep -q "[:.]$p[[:space:]]" || ok=0; done; [ $ok = 1 ] && { echo "all four ports listen after $i s"; exit 0; }; sleep 1; i=$((i+1)); done; echo "NOT all ports listen after %d s; see /tmp/pgen-restart.log"; exit 1"""
+WAIT_PORTS = r"""i=0; while [ $i -lt %d ]; do L=$( (netstat -ltn 2>/dev/null || ss -ltn 2>/dev/null) ); ok=1; for p in 80 85 2100 2101; do echo "$L" | grep -q "[:.]$p[[:space:]]" || ok=0; done; [ $ok = 1 ] && { echo "all four ports listen after $i s"; exit 0; }; sleep 1; i=$((i+1)); done; echo "NOT all ports listen after %d s; see /tmp/pgen-restart.log, /tmp/pg_stderr.log and /tmp/pgenerator_debug.log"; exit 1"""
 
 
 def cmd_restart(args):

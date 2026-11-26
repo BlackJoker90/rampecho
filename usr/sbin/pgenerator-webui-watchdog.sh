@@ -51,8 +51,8 @@ log() {
 }
 
 # Bound the log by SIZE, not just by line count. The init script's own output
-# is appended verbatim on every restart (the daemon's whole startup spew, which
-# includes long single lines), and the line-count trim above only runs when
+# is appended verbatim on every restart (until 2026-11-26 the daemon's whole
+# log as well: it kept this stdout, daemon.pm now sends it to /dev/null), and the line-count trim above only runs when
 # this script itself logs. During the restart loop caused by the missing setcap
 # this file reached 23 MB -- on a device whose disk is already nearly full that
 # is an outage of its own.

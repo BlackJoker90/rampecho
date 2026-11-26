@@ -12197,9 +12197,10 @@ sub webui_logs_bundle_runtime_logs (@) {
  $running_pid=\&renderer_running_pid if(!defined $running_pid && defined(&renderer_running_pid));
  my @logs=(
   {title=>"Boot Times",path=>$o{boot_times} || $boot_times_file || "/var/log/PGenerator/boot-times.log",end=>"tail",lines=>200},
-  # On the Pi 4 the daemon, started from this script in the background,
-  # inherits its stdout and prints every &log line there too (log.pm), in
-  # between the script's own: they repeat the daemon's log file. The WiFi
+  # A daemon started from this script (Pi 4) before it sent its stdout to
+  # /dev/null (daemon.pm, 2026-11-26) printed every &log line there too
+  # (log.pm), in between the script's own: they repeat the daemon's log
+  # file and are left out. The WiFi
   # and access point init scripts print here too (on a Pi 4, 2026-11-26,
   # none named a network): a line naming a network or a key is left out,
   # as the sanitizer finds "ssid=" only at a line's start.
@@ -12275,8 +12276,9 @@ sub webui_logs_bundle_runtime_logs (@) {
  # The journal only of the units that start rampecho, its boot screen and
  # its access point, from notice up: the whole journal carries sshd, sudo,
  # logind and WiFi lines with user names and earlier SSIDs, which the
- # sanitizer does not find there, and the daemon's own stdout (info) would
- # repeat the daemon log. "Failed to start ..." is logged under the unit.
+ # sanitizer does not find there, and a daemon from before 2026-11-26 wrote
+ # its log to its stdout (info) too (daemon.pm). "Failed to start ..." is
+ # logged under the unit.
  my $journalctl=$o{journalctl};
  if(!defined $journalctl) {
   ($journalctl)=grep { -x $_ } ("/bin/journalctl","/usr/bin/journalctl");
@@ -12307,7 +12309,10 @@ sub webui_logs_bundle_hdmi_link (@) {
  my $glob=shift;
  $glob="/sys/kernel/debug/dri/*/state" if(!defined $glob || $glob eq "");
  my @out=("","--- HDMI Link (kernel state) ---");
- if(!eval { require PGSelfTestCheck; 1 }) {
+ # A failure here must not cost the whole report: an older
+ # PGSelfTestCheck.pm without the parser (a partial deploy) died the
+ # request (Pi 4, 2026-11-26: empty reply).
+ if(!eval { require PGSelfTestCheck; 1 } || !defined(&PGSelfTestCheck::hdmi_link_from_state)) {
   push @out, "(link parser unavailable)";
   return @out;
  }
@@ -12319,7 +12324,12 @@ sub webui_logs_bundle_hdmi_link (@) {
   close($fh);
   next if(!defined $text);
   $read++;
-  my $link=PGSelfTestCheck::hdmi_link_from_state($text);
+  my $link=eval { PGSelfTestCheck::hdmi_link_from_state($text) };
+  if($@) {
+   (my $why=$@)=~s/\s+\z//;
+   push @out, "(link parser failed: $why)";
+   return @out;
+  }
   next if(!$link);
   my @keys=grep { defined $link->{$_} } qw(max_requested_bpc output_bpc output_format broadcast_rgb);
   push @out, "$link->{connector} ($file)";
@@ -12332,9 +12342,9 @@ sub webui_logs_bundle_hdmi_link (@) {
 
 # The first $lines lines of $path that do not match $skip (a line matching
 # $mask stands as $masked), read in perl
-# from at most the file's first 4 MB (the file can grow with the daemon's
-# output for as long as it runs). "" when no line is kept, undef when it
-# cannot be opened.
+# from at most the file's first 4 MB (a daemon from before 2026-11-26 wrote
+# its whole log there for as long as it ran). "" when no line is kept,
+# undef when it cannot be opened.
 sub _webui_logs_bundle_head_skipping (@) {
  my ($path,$lines,$skip,$mask,$masked)=@_;
  open(my $fh,"<",$path) or return undef;
@@ -16898,8 +16908,9 @@ sub webui_hdr_cycle_post (@) {
 # inherited (client and listening sockets, the pipe of a helper command
 # another thread was starting at the fork), or that thread's command would
 # not come back before the cycle ends. As the VSIF worker
-# ($webui_vsif_spawn); stdio stays for the log, unbuffered, as the worker
-# ends without Perl's cleanup (its handles name descriptors closed here).
+# ($webui_vsif_spawn); stdio stays (stdout is the daemon's /dev/null,
+# stderr /tmp/pg_stderr.log), unbuffered, as the worker ends without Perl's
+# cleanup (its handles name descriptors closed here).
 sub webui_hdr_cycle_spawn (@) {
  my ($token,$plate)=@_;
  require POSIX;

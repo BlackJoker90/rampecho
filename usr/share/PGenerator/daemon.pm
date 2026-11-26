@@ -28,6 +28,12 @@ sub fork_pattern_daemon (@) {
  if(fork() == 0 ){
   $SIG{PIPE}='IGNORE';
   open(STDERR,">>/tmp/pg_stderr.log");
+  # &log prints every line to stdout as well as to the log file (log.pm):
+  # the daemon kept the stdout of whoever started it (/tmp/rcPGenerator.log
+  # after a boot, the watchdog's or a restart's log, the journal on the
+  # Pi 5) and wrote its whole log there for as long as it ran. What comes
+  # before this fork (get_conf's refusals) still reaches that caller.
+  open(STDOUT,">","/dev/null");
   &boot_time_mark("daemon: start");
   # An HDR Metadata Cycle the last daemon did not end left its step's Max
   # Luma, MaxCLL and MaxFALL in the conf: put the values that were set back
