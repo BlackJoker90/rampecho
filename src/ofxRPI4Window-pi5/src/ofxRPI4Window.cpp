@@ -5,6 +5,9 @@
    table, then sets "Broadcast RGB" to the result, so the kernel's own
    Automatic rule (6.12) is not relied on. */
 #include "cea_vic.h"
+/* The configured link depth as "max bpc", as drm_override.so writes it on
+   the Pi 4 (issue #45). */
+#include "pi5_link_bpc.h"
 
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -4380,7 +4383,11 @@ void ofxRPI4Window::updateAVI_Infoframe(uint32_t plane_id, struct avi_infoframe 
 	if (!ok || !max_bpc) {
 		ofLogError() << "DRM: Unable to find MAX_BPC";
 	} else {
-		max_bpc = avi_infoframe.max_bpc;
+		/* The configured depth, not the one that follows the renderer's
+		   surface (pi5_link_bpc.h). */
+		max_bpc = pi5_connector_max_bpc(wire_bpc, avi_infoframe.max_bpc);
+		if (max_bpc != (uint64_t)avi_infoframe.max_bpc)
+			ofLog() << "DRM: max bpc " << avi_infoframe.max_bpc << " -> " << max_bpc << " (configured link depth)";
 		drm_mode_atomic_set_property(device, req, "max bpc" , connectorId,	prop_id, max_bpc, prop, 0);
 	}
 	

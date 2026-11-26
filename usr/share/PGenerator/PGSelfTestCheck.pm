@@ -214,6 +214,29 @@ sub crtc_mode_from_state {
  return { name=>$1, vrefresh=>$2, clock=>$3, h=>[$4,$5,$6,$7], v=>[$8,$9,$10,$11], flags=>hex($13), crtc=>$crtc };
 }
 
+# The link the kernel chose for the HDMI connector that drives a CRTC, from
+# the debugfs state: what the client asked for (max_requested_bpc) and what
+# the kernel put on the link (output_bpc, output_format). Kernels from 6.x
+# print these (rpi-6.12.y drm_atomic.c drm_atomic_connector_print_state;
+# output_* only for HDMI connectors, which vc4 creates with
+# drmm_connector_hdmi_init); the Pi 4's 5.10 prints none of them. Only the
+# fields printed are returned; undef without a driving HDMI connector.
+sub hdmi_link_from_state {
+ my ($text)=@_;
+ return undef if(!defined($text));
+ while($text=~/^connector\[\d+\]: (HDMI-A-\d+)\n((?:\t.*\n?)*)/mg) {
+  my ($name,$body)=($1,$2);
+  next if($body!~/^\tcrtc=crtc-\d+/m);
+  my %link=(connector=>$name);
+  foreach my $key (qw(max_requested_bpc output_bpc output_format broadcast_rgb)) {
+   # The value to the line's end: enum names can hold spaces.
+   $link{$key}=$1 if($body=~/^\t\Q$key\E=([^\n]*?)[ \t]*$/m);
+  }
+  return \%link;
+ }
+ return undef;
+}
+
 # VIC of a mode as linux 5.10 drm_match_cea_mode() finds it, 0 for none.
 sub cea_vic_for_mode {
  my ($m)=@_;

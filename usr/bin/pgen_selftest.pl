@@ -778,6 +778,13 @@ for(my $n=0;$n<@scenarios;$n++) {
  $entry->{link}={ bpc=>$bpc, format=>$format, csc=>(!defined($csc) ? "unread" : $csc_unity ? "unity" : "range"), prop=>$prop,
                   avi=>join(" ",map { sprintf("%02x",$_) } @avi[0..($#avi < 7 ? $#avi : 7)]), drm=>$if->{drm}, width=>$w, height=>$h };
  $entry->{link}{readback}=$fb_unreadable if($fb_unreadable ne "");
+ # Recorded, not judged: the plane scanned out at the switch (link.fb is the
+ # last window's), and the depth the renderer asked the kernel for next to
+ # the one the kernel chose (debugfs state, kernels from 6.x: the Pi 5).
+ # A link depth that fails then names its side (issue #45).
+ $entry->{link}{fb_switch}=$fb->{format} if($fb->{format});
+ my $kms=PGSelfTestCheck::hdmi_link_from_state(&dri_state());
+ $entry->{link}{kms}=$kms if($kms && grep { $_ ne "connector" } keys %$kms);
 
  if($if->{unread}) {
   add_check($entry,"AVI infoframe",$format,"not verified (kernel log not readable)",0,1);
