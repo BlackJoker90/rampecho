@@ -424,8 +424,8 @@ rampecho: release notes, progress, **reinstall / rollback**, ~20 % smaller packa
 </p>
 
 <p align="center">
-  <img src="screenshots/webui-selftest.png" alt="Signal self-test in Output: all 12 modes bit-exact (SDR, HDR10, HLG, Dolby Vision), with link details and the drawn swatches per mode" width="900"/><br/>
-  <sub>Signal self-test, right below Display Settings: every mode read back from the scanout on a real Pi 4, bit-exact in 12 of 12</sub>
+  <img src="screenshots/webui-selftest.png" alt="Signal self-test in Output: all 13 modes bit-exact (SDR, HDR10, back to SDR, HLG, Dolby Vision), with link details and the drawn swatches per mode" width="900"/><br/>
+  <sub>Signal self-test, right below Display Settings: every mode read back from the scanout on a real Pi 4, bit-exact in 13 of 13</sub>
 </p>
 
 <p align="center">
