@@ -12183,18 +12183,38 @@ sub webui_logs_bundle_selftest (@) {
 # the daemon's worker, and the boot timeline ("daemon: renderer not
 # running"). Bookworm (Pi 5) has no /var/log/syslog: the journal of the
 # current boot stands in for it there (pgenerator reads it as a member of
-# systemd-journal). Paths and the journalctl binary can be given for tests.
+# systemd-journal). The boot script's output (/tmp/rcPGenerator.log: on the
+# Pi 5 what it kept or reset of the display settings before the daemon
+# started) and the record of the conf the running renderer started with or
+# was last reconfigured to in place sit next to them. Paths, the journalctl
+# binary, the running renderer's pid (running_pid, a code ref) and /proc
+# (proc_dir) can be given for tests.
 sub webui_logs_bundle_runtime_logs (@) {
  my %o=@_;
+ my $start_record=$o{start_record};
+ $start_record=&renderer_started_conf_path() if(!defined $start_record && defined(&renderer_started_conf_path));
+ my $running_pid=$o{running_pid};
+ $running_pid=\&renderer_running_pid if(!defined $running_pid && defined(&renderer_running_pid));
  my @logs=(
-  ["Boot Times",$o{boot_times} || $boot_times_file || "/var/log/PGenerator/boot-times.log","tail",200],
-  ["Renderer Start Output",$o{renderer} || "/tmp/renderer-spawn.log","head",300],
-  ["Daemon stderr",$o{stderr} || "/tmp/pg_stderr.log","tail",200],
-  ["Daemon Log",$o{debug} || $log_file || "/tmp/pgenerator_debug.log","tail",1000],
+  {title=>"Boot Times",path=>$o{boot_times} || $boot_times_file || "/var/log/PGenerator/boot-times.log",end=>"tail",lines=>200},
+  # On the Pi 4 the daemon, started from this script in the background,
+  # inherits its stdout and prints every &log line there too (log.pm), in
+  # between the script's own: they repeat the daemon's log file. The WiFi
+  # and access point init scripts print here too (on a Pi 4, 2026-11-26,
+  # none named a network): a line naming a network or a key is left out,
+  # as the sanitizer finds "ssid=" only at a line's start.
+  {title=>"Boot Script Output",path=>$o{rc} || "/tmp/rcPGenerator.log",end=>"head",lines=>200,
+   skip=>qr/^ \d+ \[[^\]\n]*\] /,skip_note=>"daemon log lines left out",
+   mask=>qr/ssid|passphrase|password|\bpsk\b|\bkey\b/i,masked=>"(line naming a network or key left out)"},
+  {title=>"Renderer Start Output",path=>$o{renderer} || "/tmp/renderer-spawn.log",end=>"head",lines=>300,
+   empty=>"(empty: the renderer has written nothing to it)"},
+  {title=>"Renderer Start Record",path=>$start_record || "/var/lib/PGenerator/running/renderer-started-conf",end=>"head",lines=>200,record=>1},
+  {title=>"Daemon stderr",path=>$o{stderr} || "/tmp/pg_stderr.log",end=>"tail",lines=>200},
+  {title=>"Daemon Log",path=>$o{debug} || $log_file || "/tmp/pgenerator_debug.log",end=>"tail",lines=>1000},
  );
  my @out;
  foreach my $log (@logs) {
-  my ($title,$path,$end,$lines)=@$log;
+  my ($title,$path,$end,$lines)=@$log{qw(title path end lines)};
   my $which=($end eq "head") ? "first" : "last";
   if(! -f $path) {
    push @out, "", "--- $title ($path) ---", "(none found)";
@@ -12202,16 +12222,55 @@ sub webui_logs_bundle_runtime_logs (@) {
   }
   my $size=-s $path;
   $size=0 if(!defined $size);
-  push @out, "", "--- $title ($path, $size bytes, $which $lines lines) ---";
+  push @out, "", "--- $title ($path, $size bytes, $which $lines lines".($log->{skip_note} ? ", $log->{skip_note}" : "").") ---";
+  if($size == 0) {
+   push @out, $log->{empty} || "(empty)";
+   next;
+  }
   my $text;
-  if(open(my $fh,"-|",$end,"-n",$lines,"--",$path)) {
+  if($log->{skip}) {
+   $text=&_webui_logs_bundle_head_skipping($path,$lines,$log->{skip},$log->{mask},$log->{masked});
+  } elsif(open(my $fh,"-|",$end,"-n",$lines,"--",$path)) {
    local $/;
    $text=<$fh>;
    close($fh);
   }
+  if($log->{skip} && defined $text && $text eq "") {
+   push @out, "(only daemon log lines in the first 4 MB)";
+   next;
+  }
   $text="" if(!defined $text);
   chomp($text);
   push @out, ($text ne "") ? $text : "(unreadable or empty)";
+  # The record names the renderer it belongs to: it stays behind when that
+  # renderer stops, until the next start replaces it.
+  if($log->{record} && $text=~/\A(\d+)/ && ref($running_pid) eq "CODE") {
+   my $pid=$1;
+   # process_pid "get": every matching pid, space-separated.
+   my $now=$running_pid->();
+   my @now=grep { /^\d+$/ } split(/\s+/,defined $now ? $now : "");
+   # A renderer stuck in the driver can have an empty cmdline
+   # (command.pm, renderer_stuck_in_kernel): process_pid does not find it
+   # by name, its /proc entry is still there.
+   my $proc=defined $o{proc_dir} ? $o{proc_dir} : "/proc";
+   if(grep { $_ eq $pid } @now) {
+    push @out, "(pid $pid is the running renderer)";
+   } else {
+    # Its name and state, as renderer_stuck_in_kernel reads them: the pid
+    # can also be another process's by now.
+    my $exists="; pid $pid has exited";
+    if(-d "$proc/$pid") {
+     my ($comm,$state)=("","");
+     if(open(my $cf,"<","$proc/$pid/comm")) { $comm=<$cf>; close($cf); }
+     if(open(my $sf,"<","$proc/$pid/stat")) { my $st=<$sf>; close($sf); $state=$1 if(defined $st && $st=~/\)\s+(\S)\s/); }
+     $comm="" if(!defined $comm);
+     $comm=~s/[\r\n]+\z//;
+     $comm=~s/[^\x20-\x7e]/?/g;
+     $exists="; pid $pid still exists".($comm ne "" ? " as $comm" : "").($state ne "" ? " (state $state)" : "");
+    }
+    push @out, "(pid $pid is not found as the renderer by name: ".(@now ? "the renderer is pid ".join(" ",@now) : "no renderer found")."$exists)";
+   }
+  }
  }
  # The journal only of the units that start rampecho, its boot screen and
  # its access point, from notice up: the whole journal carries sshd, sudo,
@@ -12237,6 +12296,61 @@ sub webui_logs_bundle_runtime_logs (@) {
   push @out, ($failed eq "(unreadable or empty)") ? "(none)" : $failed;
  }
  return @out;
+}
+
+# The HDMI link as the kernel set it, from the debugfs atomic state of the
+# connector that drives a CRTC (PGSelfTestCheck::hdmi_link_from_state): the
+# depth the renderer asked for (max_requested_bpc) next to the depth and
+# format on the cable (output_bpc, output_format). Kernels from 6.x print
+# these (the Pi 5); the Pi 4's 5.10 prints none. $glob is for tests.
+sub webui_logs_bundle_hdmi_link (@) {
+ my $glob=shift;
+ $glob="/sys/kernel/debug/dri/*/state" if(!defined $glob || $glob eq "");
+ my @out=("","--- HDMI Link (kernel state) ---");
+ if(!eval { require PGSelfTestCheck; 1 }) {
+  push @out, "(link parser unavailable)";
+  return @out;
+ }
+ my $read=0;
+ foreach my $file (sort glob($glob)) {
+  open(my $fh,"<",$file) or next;
+  local $/;
+  my $text=<$fh>;
+  close($fh);
+  next if(!defined $text);
+  $read++;
+  my $link=PGSelfTestCheck::hdmi_link_from_state($text);
+  next if(!$link);
+  my @keys=grep { defined $link->{$_} } qw(max_requested_bpc output_bpc output_format broadcast_rgb);
+  push @out, "$link->{connector} ($file)";
+  push @out, @keys ? map("$_=$link->{$_}",@keys) : "(this kernel prints no link fields)";
+  return @out;
+ }
+ push @out, $read ? "(no HDMI connector drives a CRTC)" : "(debugfs state unreadable)";
+ return @out;
+}
+
+# The first $lines lines of $path that do not match $skip (a line matching
+# $mask stands as $masked), read in perl
+# from at most the file's first 4 MB (the file can grow with the daemon's
+# output for as long as it runs). "" when no line is kept, undef when it
+# cannot be opened.
+sub _webui_logs_bundle_head_skipping (@) {
+ my ($path,$lines,$skip,$mask,$masked)=@_;
+ open(my $fh,"<",$path) or return undef;
+ my ($kept,$read,@out)=(0,0);
+ while(defined(my $line=<$fh>)) {
+  $read+=length($line);
+  if($line!~$skip) {
+   chomp($line);
+   $line=$masked if($mask && $line=~$mask);
+   push @out, $line;
+   last if(++$kept >= $lines);
+  }
+  last if($read > 4194304);
+ }
+ close($fh);
+ return join("\n",@out);
 }
 
 # A command's stdout and stderr as one text (a refused journal read says
@@ -12374,6 +12488,7 @@ sub webui_create_logs_bundle (@) {
  my $ram_packet=`grep RAM_PACKET_CONFIG /sys/kernel/debug/dri/*/hdmi*_regs 2>/dev/null`;
  chomp($ram_packet);
  push @out, "RAM_PACKET_CONFIG (bit1=vendor/DV VSIF, bit2=AVI, bit7=DRM/HDR):", ($ram_packet ne "" ? $ram_packet : "(debugfs unavailable)");
+ push @out, &webui_logs_bundle_hdmi_link();
 
  # Signal Self-Test: last result, its output, a scanout probe now
  push @out, &webui_logs_bundle_selftest();

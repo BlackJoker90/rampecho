@@ -158,7 +158,7 @@ mDNS answers AAAA queries with an NSEC record, so clients do not wait for an IPv
 - A renderer restart in YCbCr no longer flashes the screen green.
 - **Faster start and reboot**: the WebUI answers about 8.5 s after the kernel starts and the start picture is on the TV at about 11 s (3.0.1: about 21 s and 23 to 25 s). rampecho starts before Bluetooth and WiFi, udev no longer sleeps at start, USB network detection runs in the background, the WiFi driver is reloaded only when it failed, and the WebUI starts before the renderer; every step is logged with its uptime in `/var/log/PGenerator/boot-times.log`.
 - **Boot without the initramfs** (from 3.0.2, on a Pi 4 with its system on the SD card): the kernel mounts the system partition itself, by its PARTUUID, which saves about 4 s in the kernel and 2.5 s in the firmware. The update changes `cmdline.txt` and `config.txt` on the boot partition and takes effect after the next reboot; it keeps the old files as `cmdline.txt.initramfs` and `config.txt.initramfs` and leaves `initramfs.gz` in place. To go back, copy the two `.initramfs` files over `cmdline.txt` and `config.txt` (from a computer, on the SD card's boot partition) and reboot.
-- **Download Logs** replaces the old log upload.
+- **Download Logs** replaces the old log upload. The report also carries the boot script's output, the settings the running renderer started with (or was last reconfigured to) and, on the Pi 5, the HDMI link depth and format the kernel set.
 
 </details>
 
