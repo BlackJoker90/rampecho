@@ -4470,9 +4470,9 @@ function selftestRender(st){
  document.getElementById('selftestRunBtn').hidden=running;
  document.getElementById('selftestQuickBtn').hidden=running;
  document.getElementById('selftestStopBtn').hidden=!running;
- // The button always starts the full test: "Run Again" only when the last
- // run was the full one, after a Quick Check it keeps its name (AVS #67).
- document.getElementById('selftestRunBtn').textContent=(state!=='idle'&&set==='full')?'Run Again':'Run Full Test';
+ // Both buttons keep the names from webui-body.html ("Run Quick Check",
+ // "Run Full Test") after every run: a "Run Again" did not say which test
+ // it runs (AVS posts #67 and #89, issue #44).
  // The modes are listed once there is something to say about them: while
  // the test runs and with its results. Before that the (i) names them.
  const list=document.getElementById('selftestModes');
