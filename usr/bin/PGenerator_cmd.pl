@@ -566,19 +566,39 @@ sub update_hostapd_conf(@) {
  &write_file("$hostapd_conf.tmp",$hostapd_conf,$content);
 }
 
+# A dnsmasq DHCP configuration for one interface (the Pi 5 image, where
+# dnsmasq serves the AP and the Bluetooth PAN; its dhcpd has no subnet and
+# exits). The router and DNS options carry the interface's tag: dnsmasq tags
+# every request with the name of the interface it arrived on, and an untagged
+# dhcp-option applies to every interface, so with the AP and the PAN file
+# both untagged the last file read (pgenerator-bt-pan.conf) gave AP clients
+# the PAN's 10.10.11.1 (read with the Pi 5 image's dnsmasq 2.90, 2026-11-26).
+sub dnsmasq_dhcp_conf(@) {
+ my ($interface,$net)=@_;
+ return "interface=$interface\nbind-dynamic\ndhcp-range=$net.50,$net.150,255.255.255.0,12h\ndhcp-option=tag:$interface,3,$net.1\ndhcp-option=tag:$interface,6,$net.1\n";
+}
+
 sub configure_dnsmasq_ap(@) {
  my ($interface,$ap_net)=@_;
  return 1 if(!defined $dnsmasq_bin || !&pgen_cmd_exists($dnsmasq_bin));
- my $dir="/etc/dnsmasq.d";
+ my $dir=dirname($dnsmasq_ap_conf);
  mkpath($dir) if(!-d $dir);
- my $conf="$dir/pgenerator-ap.conf";
- my $content="interface=$interface\nbind-dynamic\ndhcp-range=$ap_net.50,$ap_net.150,255.255.255.0,12h\ndhcp-option=3,$ap_net.1\ndhcp-option=6,$ap_net.1\n";
- if(open(my $fh,">",$conf)) {
-  print $fh $content;
+ if(open(my $fh,">",$dnsmasq_ap_conf)) {
+  print $fh &dnsmasq_dhcp_conf($interface,$ap_net);
   close($fh);
  }
  &pgen_service_action("","dnsmasq","restart");
  return 1;
+}
+
+# Does dnsmasq serve DHCP on this interface? 1 when it runs with our AP
+# configuration for it (dnsmasq answers DHCP on one wildcard socket, so
+# there is no per-interface socket to read as for dhcpd).
+sub dnsmasq_serves_interface(@) {
+ my ($interface,$dnsmasq_active)=@_;
+ return 0 if(!$dnsmasq_active || !-f $dnsmasq_ap_conf);
+ my $conf=&read_from_file($dnsmasq_ap_conf);
+ return (defined $conf && $conf=~/^interface=\Q$interface\E\s*$/m) ? 1 : 0;
 }
 
 sub wifi_ap_gateway_ready(@) {
@@ -665,6 +685,10 @@ sub wifi_ap_status (@) {
   $dnsmasq_active=&pgen_service_active("dnsmasq","dnsmasq");
  }
  $active=0 if($active && !$gateway_ready);
+ # The AP's DHCP server: dhcpd with a socket on the AP interface (Pi 4), or
+ # dnsmasq with our AP configuration (Pi 5 image). Only while the AP runs:
+ # dhcpd keeps its ap0 socket after hostapd stops.
+ my $dhcp_active=($active && (&dhcpd_serves_interface($interface) || &dnsmasq_serves_interface($interface,$dnsmasq_active))) ? 1 : 0;
  print "AP_AVAILABLE=$hostapd_available\n";
  print "AP_ACTIVE=$active\n";
  print "AP_INTERFACE=$interface\n";
@@ -673,6 +697,7 @@ sub wifi_ap_status (@) {
  print "AP_GATEWAY_READY=$gateway_ready\n";
  print "DNSMASQ_AVAILABLE=$dnsmasq_available\n";
  print "DNSMASQ_ACTIVE=$dnsmasq_active\n";
+ print "DHCP_ACTIVE=$dhcp_active\n";
 }
 
 # dhcpd (/etc/init.d/dhcp) binds the interfaces of its list that are up
@@ -690,6 +715,7 @@ BEGIN {
  $dhcpd_pid_file="/var/run/dhcpd.pid";
  $dhcpd_proc_root="/proc";
  $dhcpd_sys_net="/sys/class/net";
+ $dnsmasq_ap_conf="/etc/dnsmasq.d/pgenerator-ap.conf";
 }
 
 # Does the running dhcpd hold a packet socket on this interface? 1 yes,
@@ -807,8 +833,8 @@ sub wifi_ap_enable (@) {
 
 sub wifi_ap_disable (@) {
  my $stop=&pgen_service_action($hostapd_init,"hostapd","stop");
- if(-f "/etc/dnsmasq.d/pgenerator-ap.conf") {
-  unlink("/etc/dnsmasq.d/pgenerator-ap.conf");
+ if(-f $dnsmasq_ap_conf) {
+  unlink($dnsmasq_ap_conf);
   &pgen_service_action("","dnsmasq","restart");
  }
  if($stop==127) {
@@ -2213,7 +2239,7 @@ sub bt_restart_pan (@) {
    my $dir="/etc/dnsmasq.d";
    mkpath($dir) if(!-d $dir);
    if(open(my $fh,">","$dir/pgenerator-bt-pan.conf")) {
-    print $fh "interface=pan0\nbind-dynamic\ndhcp-range=$pan_net.50,$pan_net.150,255.255.255.0,12h\ndhcp-option=3,$pan_net.1\ndhcp-option=6,$pan_net.1\n";
+    print $fh &dnsmasq_dhcp_conf("pan0",$pan_net);
     close($fh);
    }
    &pgen_service_action("","dnsmasq","restart");

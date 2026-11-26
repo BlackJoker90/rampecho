@@ -5166,7 +5166,7 @@ async function loadAP(){
   el.innerHTML='';
   addInfo(el,'State',s.active?'Running':'Stopped');
   addInfo(el,'Interface',s.interface||'-');
-  addInfo(el,'DHCP',s.dnsmasq_active?'Running':'Stopped');
+  addInfo(el,'DHCP',s.dhcp_active?'Running':'Stopped');
   addInfo(el,'Gateway',s.gateway_ready?'Ready':'Unavailable');
   addInfo(el,'Address',s.address||((s.ap_net||'10.10.10')+'.1'));
   const t=document.getElementById('apEnableToggle');

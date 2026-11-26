@@ -13420,11 +13420,15 @@ sub webui_wifi_ap_status_json (@) {
  my $active=($kv{AP_ACTIVE} && $kv{AP_ACTIVE} eq "1") ? "true" : "false";
  my $dnsmasq_available=($kv{DNSMASQ_AVAILABLE} && $kv{DNSMASQ_AVAILABLE} eq "1") ? "true" : "false";
  my $dnsmasq_active=($kv{DNSMASQ_ACTIVE} && $kv{DNSMASQ_ACTIVE} eq "1") ? "true" : "false";
+ # Whether the AP's DHCP server serves the AP interface: dhcpd on the Pi 4,
+ # dnsmasq on the Pi 5 image (the helper decides; dnsmasq_active alone was
+ # always false on the Pi 4).
+ my $dhcp_active=($kv{DHCP_ACTIVE} && $kv{DHCP_ACTIVE} eq "1") ? "true" : "false";
  my $gateway_ready=($kv{AP_GATEWAY_READY} && $kv{AP_GATEWAY_READY} eq "1") ? "true" : "false";
  my $iface=&_webui_json_escape($kv{AP_INTERFACE}||"");
  my $ap_net=&_webui_json_escape($kv{AP_NET}||"10.10.10");
  my $address=&_webui_json_escape($kv{AP_ADDRESS}||(($kv{AP_NET}||"10.10.10").".1"));
- return "{\"status\":\"ok\",\"available\":$available,\"active\":$active,\"interface\":\"$iface\",\"ap_net\":\"$ap_net\",\"address\":\"$address\",\"gateway_ready\":$gateway_ready,\"dnsmasq_available\":$dnsmasq_available,\"dnsmasq_active\":$dnsmasq_active}";
+ return "{\"status\":\"ok\",\"available\":$available,\"active\":$active,\"interface\":\"$iface\",\"ap_net\":\"$ap_net\",\"address\":\"$address\",\"gateway_ready\":$gateway_ready,\"dnsmasq_available\":$dnsmasq_available,\"dnsmasq_active\":$dnsmasq_active,\"dhcp_active\":$dhcp_active}";
 }
 
 sub webui_wifi_status_json (@) {
