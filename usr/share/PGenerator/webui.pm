@@ -1793,6 +1793,15 @@ sub webui_http (@) {
    if($fno == $listen_fno) {
     my $client=$http_server->accept();
     next if(!$client);
+    # A peer from outside the local networks is closed here, before it is
+    # peeked, queued or counted against the pending limit (unlogged: a
+    # scanner must not fill the log in tmpfs). One without a readable
+    # address goes on; the worker refuses it (webui_client_local).
+    my $accept_peer=eval { $client->peerhost() };
+    if(defined($accept_peer) && $accept_peer ne "" && !&webui_peer_local($accept_peer)) {
+     eval { close($client); };
+     next;
+    }
     # Overload valve: shed the oldest waiter rather than let the pending set
     # grow without bound and exhaust our descriptors.
     if(scalar(keys %pending) >= $WEBUI_MAX_PENDING) {
@@ -1998,6 +2007,41 @@ sub webui_host_allowed (@) {
  }
  foreach my $o (@own) { return 1 if($name eq $o || $name eq "$o.local"); }
  return 0;
+}
+
+# The WebUI serves local networks only (maintainer 2026-11-27): a peer
+# from loopback, a private range (RFC 1918), link-local or the shared
+# 100.64/10 range (carrier NAT, Tailscale and other VPNs). A port forwarded
+# from the internet by mistake (or by UPnP) then reaches nothing. The
+# WebUI listens on IPv4 only (0.0.0.0). Anything else is refused, "" and
+# undef included: a peer that resets the connection after sending its
+# request leaves no peer address, but its bytes are still read (seen on
+# the Pi's kernel 5.10, 2026-11-27).
+sub webui_peer_local (@) {
+ my $ip=shift;
+ return 0 if(!defined($ip) || $ip!~/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+ my ($o1,$o2,$o3,$o4)=($1,$2,$3,$4);
+ return 0 if($o1 > 255 || $o2 > 255 || $o3 > 255 || $o4 > 255);
+ return 1 if($o1 == 127 || $o1 == 10);
+ return 1 if($o1 == 172 && $o2 >= 16 && $o2 <= 31);
+ return 1 if($o1 == 192 && $o2 == 168);
+ return 1 if($o1 == 169 && $o2 == 254);
+ return 1 if($o1 == 100 && $o2 >= 64 && $o2 <= 127);
+ return 0;
+}
+
+# Whether the connection comes from a local network: its peer address by
+# webui_peer_local. A Unix-domain socket (no network at all: the tests'
+# socket pairs) counts as local; a network socket whose peer address
+# cannot be read does not.
+sub webui_client_local (@) {
+ my $client=shift;
+ my $ip=eval { $client->peerhost() };
+ return &webui_peer_local($ip) if(defined($ip) && $ip ne "");
+ my $local=eval { getsockname($client) };
+ return 0 if(!defined($local) || length($local) < 2);
+ my $family=eval { Socket::sockaddr_family($local) };
+ return (defined($family) && $family == Socket::AF_UNIX()) ? 1 : 0;
 }
 
 # The answer to a request under a name that is not the device's: where to
@@ -2311,6 +2355,18 @@ sub webui_handle_request (@) {
     if(!defined($n)) { next if($!{EAGAIN} || $!{EWOULDBLOCK} || $!{EINTR}); last; }
     last if($n <= 0);
     $req.=$chunk;
+   }
+
+   # Local networks only, before anything else is read or answered (a
+   # peer from elsewhere must not hold a worker over a slow body either).
+   if(!&webui_client_local($client)) {
+    my $peer=eval { $client->peerhost() } // "unknown";
+    my ($m,$p)=$req=~/^([A-Z]{1,10})\s+(\S{0,200})/;
+    &log("WebUI: refused ".($m // "?")." ".($p // "?")." from $peer (not a local network)");
+    eval { $client->blocking(1); };
+    my $r='{"status":"error","message":"rampecho answers on local networks only"}';
+    eval { print $client "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: ".length($r)."\r\nConnection: close\r\n\r\n$r"; };
+    return;
    }
 
    # Read body if Content-Length present
@@ -13524,8 +13580,9 @@ sub webui_wifi_connect (@) {
  return "{\"status\":\"ok\",\"message\":\"$message\",\"ip\":\"$ip\"}";
 }
 
-sub webui_wifi_ap_json (@) {
- my %ap;
+# ssid and wpa_passphrase from hostapd.conf ("" when unset or unreadable).
+sub webui_wifi_ap_conf (@) {
+ my %ap=(ssid=>"",wpa_passphrase=>"");
  if(open(my $fh, "<", $hostapd_conf)) {
   while(<$fh>) {
    chomp;
@@ -13533,9 +13590,17 @@ sub webui_wifi_ap_json (@) {
   }
   close($fh);
  }
- my $ssid=&_webui_json_escape($ap{ssid}||"");
- my $pass=&_webui_json_escape($ap{wpa_passphrase}||"");
- return "{\"status\":\"ok\",\"ssid\":\"$ssid\",\"password\":\"$pass\"}";
+ return \%ap;
+}
+
+# The passphrase is write-only, as the home WiFi password (maintainer
+# 2026-11-27): without a login anyone on the network could read it here.
+# The WebUI learns only whether one is set; the TV menu shows it.
+sub webui_wifi_ap_json (@) {
+ my $ap=&webui_wifi_ap_conf();
+ my $ssid=&_webui_json_escape($ap->{ssid});
+ my $set=($ap->{wpa_passphrase} ne "") ? "true" : "false";
+ return "{\"status\":\"ok\",\"ssid\":\"$ssid\",\"password_set\":$set}";
 }
 
 # The "warning=" line of an OK from the AP root actions (PGenerator_cmd.pl
@@ -13571,6 +13636,8 @@ sub webui_wifi_ap_apply (@) {
  if("$ssid$pass"=~/[\x00-\x1f\x7f]/) {
   return '{"status":"error","message":"The network name or password contains a control character."}';
  }
+ # No password: keep the one that is set (the WebUI no longer sees it).
+ $pass=&webui_wifi_ap_conf()->{wpa_passphrase} if($pass eq "");
  if(length($pass)<8) {
   return '{"status":"error","message":"Password must be at least 8 characters"}';
  }
@@ -14436,7 +14503,12 @@ sub webui_tvmenu_base (@) {
  # a daemon restart (OTA updates do not reboot), so a renamed header would
  # otherwise keep showing the old name until the next reboot.
  my $brand="rampecho";
- my $hash=substr(Digest::MD5::md5_hex(join("|","v2",$brand,$lay->{height},@sig)),0,12);
+ # The WiFi AP's name and passphrase, top right: the WebUI no longer shows
+ # the passphrase (anyone on the network could read it there); here only
+ # someone in front of the screen sees it.
+ my $ap=&webui_wifi_ap_conf();
+ my $ap_line=($ap->{ssid} ne "" && $ap->{wpa_passphrase} ne "") ? "WiFi AP  $ap->{ssid}    Password  $ap->{wpa_passphrase}" : "";
+ my $hash=substr(Digest::MD5::md5_hex(join("|","v3",$brand,$ap_line,$lay->{height},@sig)),0,12);
  # MPC is ImageMagick's own pixel cache: read back without decoding, which
  # takes a menu step from 0.65 s to 0.2 s on the Pi.
  my $file="$_tvmenu_view_dir/base-$hash.mpc";
@@ -14448,6 +14520,7 @@ sub webui_tvmenu_base (@) {
  system($convert,"-size","${PGTVMenu::W}x$lay->{height}","xc:$_tvmenu_bg","-font",$_tvmenu_font,
   "-fill","#e3e6ea","-pointsize","46","-annotate","+$PGTVMenu::MARGIN_X+84","Patterns",
   "-fill","#7d8590","-pointsize","24","-annotate","+".($PGTVMenu::MARGIN_X+214)."+84",$brand,
+  ($ap_line ne "" ? ("-fill","#c9ced6","-pointsize","24","-gravity","NorthEast","-annotate","+$PGTVMenu::MARGIN_X+62",&_webui_tvmenu_text($ap_line),"+gravity") : ()),
   @args,"-depth","8","MPC:$part.mpc");
  return ("","") if(!-f "$part.mpc" || !-f "$part.cache" || !rename("$part.cache","$_tvmenu_view_dir/base-$hash.cache") || !rename("$part.mpc",$file));
  return ($file,$hash);

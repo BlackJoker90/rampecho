@@ -5156,11 +5156,15 @@ async function loadCecStatus(opts){
 
 __PG_LG_JS__
 
+let pgApPassSet=false;
 async function loadAP(){
  const r=await fetchJSON('/api/wifi/ap',{_quiet:true,_timeoutMs:10000});
  if(r&&r.status==='ok'){
   document.getElementById('apSsid').value=r.ssid||'';
-  document.getElementById('apPass').value=r.password||'';
+  // Write-only: the device says only whether a passphrase is set.
+  pgApPassSet=!!r.password_set;
+  const p=document.getElementById('apPass');
+  if(p&&document.activeElement!==p){p.value='';p.placeholder=pgApPassSet?'Unchanged':'Min 8 characters';}
  }
  const s=await fetchJSON('/api/wifi/ap/status',{_quiet:true,_timeoutMs:10000});
  const el=document.getElementById('apStatus');
@@ -5213,10 +5217,11 @@ async function applyAP(){
  const ssid=document.getElementById('apSsid').value.trim();
  const password=document.getElementById('apPass').value;
  if(!ssid){toast('SSID is required','err');return;}
- if(password.length<8){toast('Password must be at least 8 characters','err');return;}
+ // Empty keeps the passphrase that is set.
+ if(password.length<8&&!(password===''&&pgApPassSet)){toast('Password must be at least 8 characters','err');return;}
  const r=await fetchJSON('/api/wifi/ap',{method:'POST',
   headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password}),_timeoutMs:30000});
- if(r&&r.status==='ok'){toast('AP settings saved');if(r.warning)toast(r.warning,'warn');loadAP();}
+ if(r&&r.status==='ok'){toast('AP settings saved');if(r.warning)toast(r.warning,'warn');document.getElementById('apPass').value='';loadAP();}
  else toast(pgFailMsg('Couldn\u2019t save the access point settings',r),'err');
 }
 

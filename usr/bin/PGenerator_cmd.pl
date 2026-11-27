@@ -1389,8 +1389,14 @@ sub set_net_to_use(@) {
  my @subclass=split(",",$net_subclass // "",-1);
  # rcPGenerator and the pand init script source these files as root: only
  # octets 0-255 go in, or nothing is written.
- my $octet=sub { my $v=shift; return defined($v) && $v=~/^\d{1,3}$/ && $v <= 255; };
+ my $octet=sub { my $v=shift; return defined($v) && $v=~/^(?:0|[1-9]\d{0,2})$/ && $v <= 255; };   # no leading zero (octal to inet_aton)
  if(!$octet->($net_start) || !$octet->($net_to_use) || @subclass < 3 || @subclass > 4 || grep { !$octet->($_) } @subclass) {
+  print $error_response;
+  return;
+ }
+ # Private ranges only (10.x, 172.16-31.x, 192.168.x): the WebUI answers
+ # local networks only.
+ if(!($net_start == 10 || ($net_start == 172 && $net_to_use >= 16 && $net_to_use <= 31) || ($net_start == 192 && $net_to_use == 168))) {
   print $error_response;
   return;
  }

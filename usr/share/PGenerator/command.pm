@@ -2981,12 +2981,19 @@ sub pgenerator_cmd (@) {
   $set_net_to_use=$1;
   ($net_start,$net_subclass,$net_to_use)=split("-",$set_net_to_use);
   # Octets only (the root helper checks again): the files it writes are
-  # sourced as shell at boot.
-  if($set_net_to_use=~/^\d{1,3}-\d{1,3}(?:,\d{1,3}){2,3}-\d{1,3}$/ && !grep { $_ > 255 } split(/[-,]/,$set_net_to_use)) {
-   &sudo("SET_NET_TO_USE","$net_start",$net_subclass,$net_to_use);
-  } else {
+  # sourced as shell at boot. No leading zero: "010" would
+  # pass a numeric check and be read as octal (8) by inet_aton.
+  # The device's own networks stay private (10.x, 172.16-31.x, 192.168.x):
+  # the WebUI answers local networks only, so a client on a public range
+  # it serves itself would be locked out.
+  if($set_net_to_use!~/^(?:0|[1-9]\d{0,2})-(?:0|[1-9]\d{0,2})(?:,(?:0|[1-9]\d{0,2})){2,3}-(?:0|[1-9]\d{0,2})$/ || grep { $_ > 255 } split(/[-,]/,$set_net_to_use)) {
    &log("CMD: SET_NET_TO_USE refused (not octets)");
    $response="$error_response:Refused: SET_NET_TO_USE takes octets only";
+  } elsif(!($net_start == 10 || ($net_start == 172 && $net_to_use >= 16 && $net_to_use <= 31) || ($net_start == 192 && $net_to_use == 168))) {
+   &log("CMD: SET_NET_TO_USE refused (not a private range)");
+   $response="$error_response:Refused: SET_NET_TO_USE takes a private range (10.x, 172.16-31.x, 192.168.x)";
+  } else {
+   &sudo("SET_NET_TO_USE","$net_start",$net_subclass,$net_to_use);
   }
  }
  if($cmd =~/SET_WIFI_AP_APPLY_CONF:(.*)/) {

@@ -581,6 +581,9 @@ sub save_images_pattern (@) {
  my $file = shift;
  my $images = shift;
  return 0 if(!&pattern_template_name_ok($file));
+ # The TV menu's screen carries the WiFi AP passphrase: a capture of it
+ # would land in frames/, which port 85 serves to anyone on the network.
+ return 0 if(lc($file) eq "tv_menu");
  open(FILE,">$pattern_frames/pattern.info");
  print FILE $file;
  close(FILE);

@@ -179,7 +179,7 @@ One button in **Output** runs thirteen signal modes (SDR RGB Limited/Full and YC
 
 ### 📺 Pattern menu and playlists on the TV remote
 
-Press **OK or Menu on the TV remote** and a menu of every pattern appears on the TV: G1 plates, test images and playlists as thumbnails. Arrows move, OK shows the pattern, left/right step on, Back returns to the menu. No phone needed.
+Press **OK or Menu on the TV remote** and a menu of every pattern appears on the TV: G1 plates, test images and playlists as thumbnails. Arrows move, OK shows the pattern, left/right step on, Back returns to the menu. No phone needed. The menu's top line shows the WiFi access point's name and password, which the WebUI no longer displays.
 
 <details>
 <summary>More detail</summary>
@@ -469,7 +469,7 @@ rampecho: **off by default** (Settings → Network Access); patterns and signal 
 - **Wired PAN:** Ethernet cable directly between your computer and the Pi.
 - **Wired LAN:** Pi on your router or switch.
 - **USB:** the Pi 4's USB-C port to your computer: a network as CDC-NCM (Linux, macOS, Windows 11 without a driver), rebuilt as RNDIS when the computer does not use NCM within 5 s (older Windows). The Pi is `10.10.12.1`; the boot partition also appears as a drive.
-- **Wireless PAN:** join the Pi's access point (SSID `PGenerator`, password `PGenerator`).
+- **Wireless PAN:** join the Pi's access point (SSID `PGenerator`, password `PGenerator` until you change it; the on-screen pattern menu shows the current one).
   <p align="left"><img src="screenshots/join_wifi_pan.png" alt="Join WiFi PAN" width="200"/></p>
 - **Wireless LAN:** join your own Wi-Fi from **Connectivity** in the Web UI, after connecting once by one of the methods above. Joining and getting an address can take up to a minute; the Web UI waits for it.
 - **Wireless LAN over SSH** (`root` / `PGenerator!!$`): add the network to `/etc/wpa_supplicant/wpa_supplicant.conf` and restart the WiFi client; the Pi joins it on every boot from then on.
@@ -872,7 +872,7 @@ GETSTATUS:CLIENTNAME=PerceptualPro
 
 PGenerator 1.6 treats this as a normal `GETSTATUS`. rampecho also shows the sanitised name in its status bar while the socket is connected. `CLIENTNAME:<name>` works as a standalone command, and so do the aliases `CLIENT_NAME` and `SOFTWARE`. `=` may replace `:`. Names are limited to 64 safe characters, and commands end with `0x02 0x0d`.
 
-**Privilege separation:** the daemon runs as `pgenerator`. Privileged operations (config writes, service control, updates) go through `PGenerator_cmd.pl` via `sudo`, with base64-encoded environment arguments. The WebUI refuses cross-site requests, and it answers only under the device's own names: an IP address, `rampecho.local`, `pgenerator.local`, `localhost` and its host name (as set, and its first part bare or with `.local`). Any other name, a router's DNS name such as `pgenerator.fritz.box` included, gets a page (for `/api/` paths a JSON error) naming the IP address and `rampecho.local`. This keeps a web page from reaching the WebUI under a name of its own (DNS rebinding).
+**Privilege separation:** the daemon runs as `pgenerator`. Privileged operations (config writes, service control, updates) go through `PGenerator_cmd.pl` via `sudo`, with base64-encoded environment arguments. The WebUI refuses cross-site requests, and it answers only under the device's own names: an IP address, `rampecho.local`, `pgenerator.local`, `localhost` and its host name (as set, and its first part bare or with `.local`). Any other name, a router's DNS name such as `pgenerator.fritz.box` included, gets a page (for `/api/` paths a JSON error) naming the IP address and `rampecho.local`. This keeps a web page from reaching the WebUI under a name of its own (DNS rebinding). It also answers local networks only: loopback, the private ranges (`10.x`, `172.16–31.x`, `192.168.x`), link-local (`169.254.x`) and `100.64–127.x` (carrier NAT, Tailscale and other VPNs). A request from any other address, such as a port forwarded from the internet, gets a JSON error. A proxy or tunnel on the LAN or on the device itself counts as local: what it forwards is served. The device's own networks (access point, Bluetooth, USB) can only be set to private ranges.
 
 ### ⚙️ Configuration
 
@@ -933,7 +933,7 @@ All endpoints are on port 80 and return JSON.
 - **GET** `/api/wifi/scan`: Scan for Wi-Fi networks
 - **GET** `/api/wifi/status`: Wi-Fi connection status
 - **POST** `/api/wifi/connect`: Connect to Wi-Fi (`ssid`, `psk`)
-- **GET / POST** `/api/wifi/ap`: Read / set AP SSID and password
+- **GET / POST** `/api/wifi/ap`: Read the AP SSID and whether a password is set (`password_set`; the password itself is never sent, the TV menu shows it); set SSID and password (an empty password keeps the current one)
 - **GET** `/api/infoframes`: AVI, DRM and SPD InfoFrame hex data, whether SPD is on the wire
 - **GET** `/api/signal`: What the settings ask for (`requested`), what is on the cable (`sending`, `wire`: format, range, EOTF, depth, TMDS clock, and per setting field whether it `matches` or `differs` (`fields`), the sentence for each difference, `differences`, and the settings that comparison used, `compared`), the check against board and display (`check`), quiet `adjustments`, the current refusal (`refused`), the last HDMI link interruption during a measurement (`link_event`) and a test EDID in use or not applied (`test_edid`)
 - **GET** `/api/cec/status`: HDMI-CEC TV power status
