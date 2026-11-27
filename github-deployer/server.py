@@ -83,6 +83,30 @@ class AppError(Exception):
         self.status = status
 
 
+# ssh's own refusal ("user@host: Permission denied (publickey,password)." or,
+# with prompts left, "Permission denied, please try again."). A remote
+# command's "Permission denied" (cp, an init script, a log line) has neither
+# form and is reported as it is.
+SSH_AUTH_REFUSED_RE = re.compile(r"Permission denied(?: \([^)\n]*\)\.|, please try again\.)")
+
+
+def ssh_auth_refused(args: list[str], result: subprocess.CompletedProcess[str]) -> bool:
+    names = [Path(arg).name for arg in args if not arg.startswith("-")]
+    # sshpass's own "incorrect password" status 5 is not taken as a refusal:
+    # sshpass passes the child's status on, and the upload's syntax check
+    # exits 5 through it. With NumberOfPasswordPrompts=1 a wrong password
+    # ends in ssh's own refusal below.
+    if names and names[0] == "sshpass":
+        names = names[1:]
+    refused = bool(SSH_AUTH_REFUSED_RE.search(result.stderr or ""))
+    # ssh's fatal() exits 255; any other status is the remote command's. scp
+    # passes ssh's refusal on with its own status and runs no remote command
+    # whose output could carry the phrase.
+    if names and names[0] == "scp":
+        return refused
+    return result.returncode == 255 and refused
+
+
 def run(
     args: list[str],
     *,
@@ -108,7 +132,7 @@ def run(
         raise AppError(f"Command timed out after {timeout} seconds", HTTPStatus.GATEWAY_TIMEOUT) from exc
     if result.returncode:
         detail = (result.stderr or result.stdout).strip()
-        if "Permission denied" in detail:
+        if ssh_auth_refused(args, result):
             detail = "SSH authentication failed"
         raise AppError(detail or f"{args[0]} exited with status {result.returncode}", HTTPStatus.BAD_GATEWAY)
     return result
@@ -808,7 +832,7 @@ while [ "$i" -lt 45 ]; do
   i=$((i + 1))
 done
 echo "PGenerator did not answer /api/ping within 45 seconds" >&2
-tail -n 5 /tmp/PGenerator-restart.log 2>/dev/null >&2
+tail -n 5 /tmp/PGenerator-restart.log >&2 2>/dev/null
 exit 1
 """.strip()
     output = ssh(connection, command, timeout=70)
