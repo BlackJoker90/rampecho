@@ -1963,6 +1963,64 @@ sub _webui_reject_request (@) {
  &log("WebUI: request rejected ($status): $message");
 }
 
+# DNS rebinding: a page on a name its owner points at this device's
+# address reaches the WebUI as same-origin, with that name in Host, and can
+# read every answer. Only the device's own names are served: an IP literal,
+# localhost, the names its mDNS responder answers (@webui_mdns_hostnames,
+# bare or .local) and its host name (as written, and its first label bare or
+# .local). A request without a Host line passes (HTTP/1.0; no browser sends
+# one); a Host line that is present but none of these is refused, a router's
+# DNS name included (pgenerator.fritz.box: its suffix is not ours to trust).
+# A value longer than a DNS name and a port is refused before any pattern
+# runs over it.
+sub webui_host_allowed (@) {
+ my ($host,$hostname)=@_;
+ return 1 if(!defined($host));
+ return 0 if(length($host) > 300);
+ my $h=lc($host);
+ $h=~s/^[ \t]+//; $h=~s/[ \t\r]+\z//;
+ return 1 if($h=~/^\[[0-9a-f:.]+\](?::\d{1,5})?$/);
+ return 0 if($h!~/^([a-z0-9.\-]+?)\.?(?::\d{1,5})?$/);
+ my $name=$1;
+ if($name=~/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/) {
+  return ($1 <= 255 && $2 <= 255 && $3 <= 255 && $4 <= 255) ? 1 : 0;
+ }
+ my @own=("localhost",@webui_mdns_hostnames);
+ if(defined($hostname) && length($hostname) <= 300) {
+  (my $own=lc($hostname))=~s/[\s\x00]+//g;
+  $own=~s/\.\z//;
+  my $label=qr/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?/;
+  if($own=~/^($label)(?:\.$label)*$/) {
+   my $first=$1;
+   return 1 if($name eq $own);
+   push(@own,$first);
+  }
+ }
+ foreach my $o (@own) { return 1 if($name eq $o || $name eq "$o.local"); }
+ return 0;
+}
+
+# The answer to a request under a name that is not the device's: where to
+# open the WebUI instead (the port it was reached on kept when not 80). It
+# names no part of the request. API paths get JSON with the same message,
+# which the companions show as the error.
+sub webui_host_refused_answer (@) {
+ my ($path,$local_ip,$local_port)=@_;
+ my $ip=(defined($local_ip) && $local_ip=~/^\d{1,3}(?:\.\d{1,3}){3}$/ && $local_ip ne "0.0.0.0") ? $local_ip : "";
+ my $port=(defined($local_port) && $local_port=~/^\d{1,5}$/ && $local_port ne "80") ? ":$local_port" : "";
+ my @urls=(($ip ne "" ? ("http://$ip$port/") : ()),"http://rampecho.local$port/");
+ my $text="This name is not one of the device's own, so rampecho does not answer under it. Open ".join(" or ",@urls)." instead.";
+ if(defined($path) && $path=~m{^/api/}) {
+  return ("application/json",'{"status":"error","message":"'.$text.'"}');
+ }
+ my $links=join(" or ",map { "<a href=\"$_\">$_</a>" } @urls);
+ (my $html_text=$text)=~s/Open .*/Open $links instead./;
+ return ("text/html; charset=utf-8","<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>rampecho</title>"
+  ."<style>body{font:16px/1.5 system-ui,sans-serif;margin:2rem 1rem;max-width:36rem;background:#fff;color:#111}"
+  ."\@media (prefers-color-scheme:dark){body{background:#111;color:#eee}a{color:#8cf}}</style></head>"
+  ."<body><h1>Open rampecho by its own address</h1><p>$html_text</p></body></html>");
+}
+
 # The page opened under the old name, pgenerator.local, moves to
 # rampecho.local (maintainer 2026-11-14), port and query kept. Only the page
 # itself: assets and API calls under pgenerator.local are served as before,
@@ -2324,7 +2382,24 @@ sub webui_handle_request (@) {
     $origin_foreign=1 if($origin_host eq "" || $origin_host ne $host);
    }
 
-   if($method eq "OPTIONS") {
+   # The Host line as sent ($request_host above takes only a plain one);
+   # undef when there is none. Greedy, and trimmed in webui_host_allowed:
+   # a lazy capture before [ \t]* backtracks over a long run of blanks in
+   # quadratic time.
+   my $request_host_line=($req=~/^Host:[ \t]*([^\r\n]*)/mi) ? $1 : undef;
+   my $own_hostname="";
+   if(defined($request_host_line) && defined($hostname_file) && open(my $hfh,"<",$hostname_file)) {
+    local $/; $own_hostname=<$hfh> // ""; close($hfh);
+   }
+
+   if(!&webui_host_allowed($request_host_line,$own_hostname)) {
+    (my $shown=substr($request_host_line,0,80))=~s/[^\x21-\x7e]/?/g;
+    &log("WebUI: refused $method $path for Host $shown (not a name of this device)");
+    my $local_port=eval { $client->sockport() } || "";
+    my ($type,$answer)=&webui_host_refused_answer($path,$request_local_ip,$local_port);
+    print $client "HTTP/1.1 403 Forbidden\r\nContent-Type: $type\r\nCache-Control: no-store\r\nContent-Length: ".length($answer)."\r\n$cors\r\n$answer";
+   }
+   elsif($method eq "OPTIONS") {
     print $client "HTTP/1.1 204 No Content\r\n$cors\r\n";
    }
    elsif($origin_foreign) {

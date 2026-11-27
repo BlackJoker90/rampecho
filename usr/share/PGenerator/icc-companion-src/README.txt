@@ -27,7 +27,9 @@ If the name cannot be resolved -- more than one PGenerator+ on the network, a
 routed network, or mDNS blocked -- give the address explicitly instead, either
 as a line reading SERVER=http://<address> in PGenPatchCompanion.conf beside the
 executable, or by starting the companion with --server=http://<address>. A
-SERVER set that way always wins over discovery.
+SERVER set that way always wins over discovery. Use the device's IP address,
+rampecho.local, pgenerator.local or its host name: rampecho does not answer
+under other names, such as a router's DNS name (pgenerator.fritz.box).
 
 PGenerator+ Patch Companion
 ==========================

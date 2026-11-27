@@ -872,7 +872,7 @@ GETSTATUS:CLIENTNAME=PerceptualPro
 
 PGenerator 1.6 treats this as a normal `GETSTATUS`. rampecho also shows the sanitised name in its status bar while the socket is connected. `CLIENTNAME:<name>` works as a standalone command, and so do the aliases `CLIENT_NAME` and `SOFTWARE`. `=` may replace `:`. Names are limited to 64 safe characters, and commands end with `0x02 0x0d`.
 
-**Privilege separation:** the daemon runs as `pgenerator`. Privileged operations (config writes, service control, updates) go through `PGenerator_cmd.pl` via `sudo`, with base64-encoded environment arguments. The WebUI refuses cross-site requests.
+**Privilege separation:** the daemon runs as `pgenerator`. Privileged operations (config writes, service control, updates) go through `PGenerator_cmd.pl` via `sudo`, with base64-encoded environment arguments. The WebUI refuses cross-site requests, and it answers only under the device's own names: an IP address, `rampecho.local`, `pgenerator.local`, `localhost` and its host name (as set, and its first part bare or with `.local`). Any other name, a router's DNS name such as `pgenerator.fritz.box` included, gets a page (for `/api/` paths a JSON error) naming the IP address and `rampecho.local`. This keeps a web page from reaching the WebUI under a name of its own (DNS rebinding).
 
 ### ⚙️ Configuration
 
