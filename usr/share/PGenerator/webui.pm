@@ -11082,6 +11082,7 @@ our %webui_signal_value_ok=(
  dv_profile=>qr/^\d{1,2}$/,
  mode_idx=>qr/^(?:-1|\d{1,4})$/,
  calman_range=>qr/^[012]$/,
+ port85_system_commands=>qr/^[01]$/,
  calman_dv_container=>qr/^[12]$/,
  min_luma=>qr/^\d{1,6}(?:\.\d{1,6})?$/,
  max_luma=>qr/^\d{1,6}(?:\.\d{1,6})?$/,
@@ -11095,7 +11096,7 @@ our %webui_signal_value_ok=(
 # Limited, Dolby Vision fills in its primaries) would otherwise overwrite
 # what the software set and restart the renderer for a setting that is not
 # part of the signal.
-our %webui_conf_only_keys=(calman_range=>1,calman_dv_container=>1);
+our %webui_conf_only_keys=(calman_range=>1,calman_dv_container=>1,port85_system_commands=>1);
 
 # Writes a POST of only %webui_conf_only_keys keys. Same helper, read-back
 # and memory rules as webui_apply_config; nothing else is derived, the

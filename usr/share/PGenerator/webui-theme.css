@@ -624,6 +624,7 @@ body.layout-tablet .meter-live-primary-values{flex-wrap:nowrap!important;overflo
 @media(max-width:420px){body.layout-tablet .meter-live-primary-values{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px!important;overflow:visible}}
 .meter-toggle{display:inline-flex;align-items:flex-start;gap:6px;min-height:34px;padding:0;font-size:var(--fs-sm);color:var(--text);text-transform:none !important;letter-spacing:0 !important;cursor:pointer;line-height:1.25}
 .meter-toggle input{width:16px;height:16px;accent-color:var(--accent);flex:0 0 auto}
+#networkAccessCard .meter-toggle{display:flex;align-items:center;min-height:0;width:fit-content}
 	.meter-note-toggle{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:0;font-size:var(--fs-sm);color:var(--text);cursor:pointer;margin-top:0;text-transform:none !important;letter-spacing:0 !important;line-height:1.25}
 	.meter-note-toggle input{width:16px;height:16px;accent-color:var(--accent);flex:0 0 auto}
 	.meter-toggle-row{display:flex;align-items:flex-start;gap:8px 14px;flex-wrap:wrap;margin-top:6px}

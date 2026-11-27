@@ -394,6 +394,10 @@ rampecho: **Scaling Type in the WebUI**, applies without a reboot
 Original: latest release only<br/>
 rampecho: release notes, progress, **reinstall / rollback**, ~20 % smaller packages
 
+**Device commands over the network**<br/>
+Original: any client on port 85 could rewrite the boot configuration, network and WiFi, or reboot the Pi, and a web page could send them through a browser<br/>
+rampecho: **off by default** (Settings → Network Access); patterns and signal settings work as before, and HTTP requests on the pattern ports are closed unread
+
 > The *Original* lines describe upstream behaviour as stated in the fork commits that changed it. Run `git log origin/main..main` in a clone with both remotes for the full list.
 
 ## 📸 Screenshots
@@ -505,7 +509,7 @@ rampecho is a free, open-source display calibration suite for the Raspberry Pi 4
 
 - **Precision HDMI patterns:** full-screen patches, windows, APL backgrounds, custom RGB triplets and patch sizes, drawn through DRM/KMS.
 - **HDR and Dolby Vision:** HDR10 (ST.2084 PQ with mastering metadata), HLG, standard and Low Latency Dolby Vision. AVI, DRM and DOVI infoframes are set correctly, and capabilities are detected from the EDID.
-- **Network control:** Calman (UPGCI, port 2100), ColourSpace / LightSpace and HCFR (port 85; ColourSpace also through its `PiTPG` entry, PiTPG protocol 2), DeviceControl, and the Resolve XML protocol (port 20002, outbound). UDP discovery runs on port 1977. Names and values a port 85 client sends never reach a shell or a path outside their directory, and templates never run as Perl (`EVALPATTERN` templates are refused, as `EVAL=` lines always were): template names (`GETCONF`, `SETCONF`, `TESTTEMPLATE`, `SAVEIMAGES`) are file names without `/` or control characters, `FUNCTIONS` names are plain words, and `VIDEO` plays only with `omxplayer` or `pg_diag_video_player`, a file under the video directory and a duration such as `30s`. A refused request is answered `ERR` (`ERR:Refused: …` where the command has a reply).
+- **Network control:** Calman (UPGCI, port 2100), ColourSpace / LightSpace and HCFR (port 85; ColourSpace also through its `PiTPG` entry, PiTPG protocol 2), DeviceControl, and the Resolve XML protocol (port 20002, outbound). UDP discovery runs on port 1977. Names and values a port 85 client sends never reach a shell or a path outside their directory, and templates never run as Perl (`EVALPATTERN` templates are refused, as `EVAL=` lines always were): template names (`GETCONF`, `SETCONF`, `TESTTEMPLATE`, `SAVEIMAGES`) are file names without `/` or control characters, `FUNCTIONS` names are plain words, and `VIDEO` plays only with `omxplayer` or `pg_diag_video_player`, a file under the video directory and a duration such as `30s`. A refused request is answered `ERR` (`ERR:Refused: …` where the command has a reply). Device commands (`SET_BOOT_CONFIG`, `SET_DTOVERLAY`, memory, network, WiFi, Bluetooth, host name, governor, `REBOOT`, `HALT`) are refused unless **System commands over the network** is on (Settings → Network Access); patterns and signal settings work either way. A connection that starts like an HTTP request (other than the image list's `GET`) is closed unread, so a web page cannot send commands to these ports through a browser.
 - **Web dashboard:** signal settings, diagnostic patterns, a live infoframe decoder, HDMI-CEC, networking, OTA, and meter measurements. The measurement workspaces can be hidden for pattern-only setups.
 - **LG AutoCal (SDR and HDR):** on-device closed-loop calibration of LG TVs: 26-point greyscale, RGB balance, 3D LUT and HDR tone mapping, with an optional Tone Mapping Shadow Fix.
 - **Meter workflows:** ArgyllCMS `spotread` with persistent sessions, greyscale, colour and saturation sweeps, CCSS management, and live ΔE and chromaticity charts.
@@ -629,7 +633,7 @@ Active signal, the infoframe decoder (AVI, DRM and SPD), the measured HDMI link 
 
 **Settings**
 
-Layout, zoom, **13 themes** in a Dark and a Light group (Glow is the default), Show/Hide for the Measure workspaces, and settings backup and restore
+Layout, zoom, **13 themes** in a Dark and a Light group (Glow is the default), Show/Hide for the Measure workspaces, settings backup and restore, and **Network Access** (whether software on ports 85 and 2100 may send device commands such as boot configuration, network or reboot; off by default)
 
 **Don't need the meter tools?** Settings → UI Settings → **Measure Workspaces → Hide** removes Calibration, Meter Profiler, 3D LUT and Display Profiler from the navigation, along with the meter status in the header. Saved measurements, profiles and LUTs are kept, and **Show** brings everything back. The choice is stored per browser.
 
@@ -899,7 +903,8 @@ PGenerator 1.6 treats this as a normal `GETSTATUS`. rampecho also shows the sani
 - `dv_tunnel_grid` (`1` or `0`, in `GET /api/config` only): whether Standard Dolby Vision goes out in PGenerator 1.6's tunnel, on its 8-bit grid (Standard transport, no PiTPG client, no full-range PiTPG tunnel, a Pi 4); the WebUI's meter series follow it, the Patch Companion's included. Not a setting: a posted value is ignored
 - `dv_vsif_form` (`1`=HDMI 1.4b PB4/PB5 0, `2`=Dolby form, empty): Standard DV infoframe form; the daemon leaves it empty so the kernel's own HDMI 1.4b VSIF (PB4 0x20, PB5 0x01, matching Murideo SIX-G and PGenerator 1.6) goes out (a posted value is ignored) and deletes a `1` or `2` from an older version at the next Dolby Vision renderer start
 - `dv_ll_bt2020` (`1`, empty): Low Latency DV with PB5 0x10; the daemon leaves it empty (PB5 0, as PGenerator 1.6; a posted value is ignored) and deletes a `1` from an older version at the next Dolby Vision renderer start
-- `update_repo` (`owner/repo`): Optional: override the OTA source (default from `update-channel`). Read-only like `ip_pattern`/`port_pattern`: set it as root in the file; `POST /api/config`, port 85 and a backup import leave it as it is. Read-only like `ip_pattern`/`port_pattern`: set it as root in the file; `POST /api/config`, port 85 and a backup import do not change it
+- `update_repo` (`owner/repo`): Optional: override the OTA source (default from `update-channel`). Read-only like `ip_pattern`/`port_pattern`: set it as root in the file; `POST /api/config`, port 85 and a backup import leave it as it is
+- `port85_system_commands` (`1`, empty or `0`): lets network clients on ports 85 and 2100 send device commands (boot config, memory split, network, WiFi, Bluetooth visibility, host name, CPU governor, reboot, power off). Off by default; Settings → Network Access in the Web UI
 
 **LUT correction:** `/etc/PGenerator/lut.txt` holds per-channel deltas (`R,G,B=R_delta,G_delta,B_delta`, plus an `ALL` wildcard). The daemon applies them before writing pattern files.
 

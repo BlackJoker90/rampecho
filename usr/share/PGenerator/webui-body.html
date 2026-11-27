@@ -2129,6 +2129,14 @@ __PG_LOGO_DARK__
     <div id="systemBackupStatus" style="margin-top:6px;font-size:var(--fs-2xs);color:var(--text2)"></div>
     <div class="update-hint">System exports include rampecho configuration, playlists, signal presets, TV menu settings, the TV start screen theme, custom series, custom meter and ICC profiles, calibration history, LUTs, Dolby Vision configurations, reports, and user-added diagnostic images and videos. Built-in media, caches, logs, hardware identity, and Companion pairing data are excluded.</div>
   </section>
+  <section class="card-section" id="networkAccessCard" aria-labelledby="setTitle_netaccess">
+   <div class="card-section-head"><h3 class="card-section-title" id="setTitle_netaccess"><svg class="card-section-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 10 4-1.7 7-5.6 7-10V6l-7-3Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Network Access</h3></div>
+    <label class="meter-toggle">
+     <input type="checkbox" id="port85SystemCommands" onchange="port85SystemCommandsChanged(this.checked)">
+     System commands over the network <span class="meter-help-tip" tabindex="0" title="Lets calibration and control software on ports 85 and 2100 change the device itself: boot configuration, memory split, network, WiFi, Bluetooth visibility, host name, CPU governor, reboot and power off. Off, they are refused; patterns and signal settings from Calman, ColourSpace, HCFR and others work either way." aria-label="System commands over the network help">?</span>
+    </label>
+    <div class="update-hint">Off by default. Only turn it on while a tool you trust needs it: with it on, anyone on the network can rewrite the boot configuration or restart the device through these ports.</div>
+  </section>
  </section>
 
 </div>

@@ -2854,6 +2854,27 @@ sub cmd_conf_value_refusal (@) {
  return "primaries must be 0 to 5";
 }
 
+# Commands that change the device rather than the signal: boot config,
+# memory split, network, WiFi, Bluetooth, host name, CPU governor, power.
+# From a network client (port 85 or 2100) they run only while the WebUI's
+# "System commands over the network" switch (port85_system_commands=1) is
+# on; the WebUI calls pgenerator_cmd itself and is not limited by it.
+# pgenerator_cmd matches the SET_ names anywhere in the text, so they are
+# looked for anywhere here too.
+our @network_system_commands=qw(SET_DTOVERLAY SET_BOOT_CONFIG SET_GPU_MEMORY SET_CMA_MEMORY
+ SET_BOOT_MEMORY SET_OUTPUT_RANGE SET_DISCOVERABLE SET_HOSTNAME SET_SCALING_GOVERNOR
+ SET_NET_TO_USE SET_WIFI_AP_APPLY_CONF SET_WIFI_APPLY_CONF);
+sub network_system_command_refusal (@) {
+ my $cmd=shift // "";
+ my $name="";
+ if($cmd eq "REBOOT" || $cmd eq "HALT") { $name=$cmd; }
+ else { ($name)=grep { index($cmd,"$_:")>=0 } @network_system_commands; }
+ return "" if(!defined($name) || $name eq "");
+ return "" if(($pgenerator_conf{"port85_system_commands"} // "") eq "1");
+ &log("CMD: $name from a network client refused (System commands over the network is off)");
+ return "$error_response:Refused: $name over the network is off; turn on System commands over the network in the WebUI (Settings → Network Access)";
+}
+
 sub pgenerator_cmd (@) {
  my $cmd = shift;
  my $response = "";

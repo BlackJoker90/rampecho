@@ -969,6 +969,8 @@ function applyConfigState(nextConfig){
  selftestMarkStale();
  const rfc=document.getElementById('resolveForceCenter');
  if(rfc) rfc.checked=String(config.resolve_force_center||'0')==='1';
+ const p85=document.getElementById('port85SystemCommands');
+ if(p85) p85.checked=String(config.port85_system_commands||'0')==='1';
  const rps=document.getElementById('resolvePatchSize');
  if(rps&&document.activeElement!==rps) rps.value=(config.resolve_patch_size&&/^\d+$/.test(String(config.resolve_patch_size)))?String(config.resolve_patch_size):'';
  const crg=document.getElementById('calman_range');
@@ -5387,6 +5389,15 @@ async function resolveForceCenterChanged(on){
   if(r&&r.status==='ok') toast(on?'Resolve patches will be centered':'Resolve patches follow the sent position');
   else toast('Failed to save setting','err');
  }catch(e){ toast('Failed to save setting','err'); }
+}
+async function port85SystemCommandsChanged(on){
+ const box=document.getElementById('port85SystemCommands');
+ try{
+  const r=await fetchJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({port85_system_commands:on?'1':'0'})});
+  if(r&&r.status==='ok') toast(on?'System commands over the network are on':'System commands over the network are off');
+  else { if(box) box.checked=!on; toast(pgFailMsg('Couldn\u2019t save the setting',r),'err'); }
+ }catch(e){ if(box) box.checked=!on; toast('Couldn\u2019t save the setting','err'); }
 }
 async function resolveDisconnect(){
  const r=await fetchJSON('/api/resolve/disconnect',{method:'POST'});
