@@ -107,7 +107,7 @@ sub sync_pattern_bits_default (@) {
 #       Get PGenerator Conf Function          #
 ###############################################
 sub get_pgenerator_conf(@) {
- open(CONF,"$pattern_conf");
+ open(CONF,"<",$pattern_conf);
  while(<CONF>) {
   $_=~s/\r|\n//g;
   next if($_=~/^#/ || $_ eq "");

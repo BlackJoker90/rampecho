@@ -485,7 +485,7 @@ OTA updates stay within one `MAJOR.MINOR` family, with one bridge: 2.13 goes to 
 2. Flash the latest fork image (see above).
 3. Import the backup, then use **Check for Updates** to reach the newest release. A Pi on 2.13.51 or older is offered 2.13.52 first; check again from there to get 3.0.
 
-From then on the Pi follows this fork's releases. The update source is `usr/share/PGenerator/update-channel`, and an `update_repo=owner/repo` line in `PGenerator.conf` overrides it.
+From then on the Pi follows this fork's releases. The update source is `usr/share/PGenerator/update-channel`, and an `update_repo=owner/repo` line in `PGenerator.conf` overrides it. That line is edited as root on the Pi only: the Web UI, port 85 and a backup import leave it as it is (an imported backup keeps the Pi's own `update_repo`, `ip_pattern` and `port_pattern`).
 
 ### ⬆️ Updating
 
@@ -899,7 +899,7 @@ PGenerator 1.6 treats this as a normal `GETSTATUS`. rampecho also shows the sani
 - `dv_tunnel_grid` (`1` or `0`, in `GET /api/config` only): whether Standard Dolby Vision goes out in PGenerator 1.6's tunnel, on its 8-bit grid (Standard transport, no PiTPG client, no full-range PiTPG tunnel, a Pi 4); the WebUI's meter series follow it, the Patch Companion's included. Not a setting: a posted value is ignored
 - `dv_vsif_form` (`1`=HDMI 1.4b PB4/PB5 0, `2`=Dolby form, empty): Standard DV infoframe form; the daemon leaves it empty so the kernel's own HDMI 1.4b VSIF (PB4 0x20, PB5 0x01, matching Murideo SIX-G and PGenerator 1.6) goes out (a posted value is ignored) and deletes a `1` or `2` from an older version at the next Dolby Vision renderer start
 - `dv_ll_bt2020` (`1`, empty): Low Latency DV with PB5 0x10; the daemon leaves it empty (PB5 0, as PGenerator 1.6; a posted value is ignored) and deletes a `1` from an older version at the next Dolby Vision renderer start
-- `update_repo` (`owner/repo`): Optional: override the OTA source (default from `update-channel`)
+- `update_repo` (`owner/repo`): Optional: override the OTA source (default from `update-channel`). Read-only like `ip_pattern`/`port_pattern`: set it as root in the file; `POST /api/config`, port 85 and a backup import leave it as it is. Read-only like `ip_pattern`/`port_pattern`: set it as root in the file; `POST /api/config`, port 85 and a backup import do not change it
 
 **LUT correction:** `/etc/PGenerator/lut.txt` holds per-channel deltas (`R,G,B=R_delta,G_delta,B_delta`, plus an `ALL` wildcard). The daemon applies them before writing pattern files.
 

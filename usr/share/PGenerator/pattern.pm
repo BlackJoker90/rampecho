@@ -485,7 +485,7 @@ sub get_pattern_image (@) {
  my %frame = ();
  my $n_frames = 0;
  my $count = 0;
- open(FILE,"$pattern_frames/pattern.info");
+ open(FILE,"<","$pattern_frames/pattern.info");
  $pname_file=<FILE>;
  close(FILE);
  chomp($pname_file);
@@ -533,7 +533,7 @@ sub get_patternimages_list (@) {
  my $last="";
  my $index="";
  my $cnt=0;
- open(FILE,"$pattern_frames/pattern.info");
+ open(FILE,"<","$pattern_frames/pattern.info");
  $pname_file=<FILE>;
  close(FILE);
  chomp($pname_file);

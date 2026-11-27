@@ -1386,7 +1386,14 @@ sub set_net_to_use(@) {
  my $net_start=$ARGV[1];
  my $net_subclass=$ARGV[2];
  my $net_to_use=$ARGV[3];
- my @subclass=split(",",$net_subclass);
+ my @subclass=split(",",$net_subclass // "",-1);
+ # rcPGenerator and the pand init script source these files as root: only
+ # octets 0-255 go in, or nothing is written.
+ my $octet=sub { my $v=shift; return defined($v) && $v=~/^\d{1,3}$/ && $v <= 255; };
+ if(!$octet->($net_start) || !$octet->($net_to_use) || @subclass < 3 || @subclass > 4 || grep { !$octet->($_) } @subclass) {
+  print $error_response;
+  return;
+ }
  # change pand default file
  open(DEFAULT_PAND_FILE,">$pand_default_file");
  print DEFAULT_PAND_FILE "PAND_NET=\"$net_start.$net_to_use.$subclass[1]\"";
@@ -1437,7 +1444,7 @@ sub pgenerator_conf_set_pair (@) {
  my ($content,$var_to_set,$value)=@_;
  my $paired_var = "";
  my $paired_value = "";
- return $content if($var_to_set =~/^(ip_pattern|^port_pattern)$/ || $var_to_set !~/^\w+$/);
+ return $content if($var_to_set =~/^(ip_pattern|port_pattern|update_repo)$/ || $var_to_set !~/^\w+$/);
  # One line per key: a line break in a value would add keys of its own.
  return $content if(defined $value && $value =~/[\x00-\x1f\x7f]/);
  if($var_to_set eq "dv_metadata") {
@@ -1529,7 +1536,7 @@ sub pgenerator_conf_update (@) {
 }
 
 sub set_pgenerator_conf (@) {
- return print $error_response if($ARGV[1] =~/^(ip_pattern|^port_pattern)$/);
+ return print $error_response if($ARGV[1] =~/^(ip_pattern|port_pattern|update_repo)$/);
  return print $error_response if($ARGV[1] !~/^\w+$/ || !&pgenerator_conf_value_ok($ARGV[2] // ""));
  return print $error_response if(!&pgenerator_conf_update(sub { return &pgenerator_conf_set_pair($_[0],$ARGV[1],$ARGV[2] // ""); }));
  print $ok_response;
@@ -1569,7 +1576,7 @@ sub set_plugin (@) {
  system("$tar zxf $f_tmp_name -C $upload_tmp_dir 2>/dev/null");
  return print $error_response if($? != 0);
  chdir("$plugin_dir") || return print $error_response;
- open(CONF,"$plugin_conf_file");
+ open(CONF,"<",$plugin_conf_file);
  while(<CONF>) {
   chomp($_);
   $_=~s/\r//g;

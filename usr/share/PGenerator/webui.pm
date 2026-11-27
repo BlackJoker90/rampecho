@@ -11663,7 +11663,7 @@ sub webui_apply_config (@) {
   my @conf_deletes=();
   my %conf_written=();
   foreach my $k (sort keys %changes) {
-   next if($k eq "ip_pattern" || $k eq "port_pattern"); # read-only
+   next if($k eq "ip_pattern" || $k eq "port_pattern" || $k eq "update_repo"); # read-only (update_repo picks what root installs)
    my $cur=defined($pgenerator_conf{$k}) ? "$pgenerator_conf{$k}" : "";
    my $value_changed=("$changes{$k}" ne $cur);
    # A sudo + perl helper spawn costs ~0.35s and a signal-mode switch
