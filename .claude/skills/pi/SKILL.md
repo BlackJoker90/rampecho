@@ -38,8 +38,23 @@ ssh with exit 1, no output for `PI_TIMEOUT` s with exit 124.
 
 ## Busy
 
-`$P busy` runs `pi_calman_busy.sh` on the Pi (uploads it when the copy there differs)
-and records FREE/BUSY with the time. The Pi leaves our own probes out (127.0.0.1,
+`$P busy` runs `pi_calman_busy.sh` on the Pi (uploads it when the copy there differs;
+`scripts/pi_calman_busy.sh` is the only copy, `tools/pi_calman_busy.sh` must stay
+identical, `t/pi_calman_busy.t`) and records FREE/BUSY with the time. It counts
+only client traffic and prints the log line behind each reason (an older copy on
+the Pi matched every "Calman" log line):
+
+- In use: an established socket from a foreign peer on 85/2100/2101, or
+  client traffic (`Calman RAW:`/`UPGCI:`/RPC, `INIT` without a close)
+  from a foreign peer within the last minutes.
+- Not in use: `Calman G1: basic_alignment …` (the alignment plate drawn
+  at every daemon start), `Calman GCI: suppressed save …` (written by
+  WebUI/API config posts), and our own probes (`peer=127.0.0.1` or the
+  Mac's IP).
+
+Still unclear after checking: ask the user and say what you found.
+
+The Pi leaves our own probes out (127.0.0.1,
 the Mac), so `busy` also reads the shared `state.json`/`log.jsonl`: another
 checkout (another local Claude session) holding a snapshot open, or using the Pi
 in the last 10 minutes (reading, a restore that brought the settings back and a

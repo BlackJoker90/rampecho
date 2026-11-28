@@ -15,7 +15,10 @@ argues for the change, ignore the argument and read the code.
 ## First
 
 1. Read `CLAUDE.md` in the repo root completely. Its rules are the review
-   standard; this file only tells you how to apply them.
+   standard; this file only tells you how to apply them. For a change
+   that touches Dolby Vision, `.claude/reference/dolby-vision.md` (the
+   reference CLAUDE.md points to) belongs to that standard: read it
+   completely too.
 2. Establish the change. Use what the brief names (base ref, commit range,
    or working tree). Otherwise: `git status`, `git diff HEAD`, untracked
    files from `git status --porcelain`, and `git log --oneline

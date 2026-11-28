@@ -23,44 +23,14 @@ top priority, above any feature, in SDR, HDR10, HLG and Dolby Vision alike:
   a readback), the standard and, where Calman drives a hardware generator,
   Calman's own packet; where they differ, 1.6 wins unless a standard or a
   readback proves otherwise, and name the difference. Where 1.6 departs
-  from a standard, the maintainer decides (Dolby Vision metadata id: 0 as
-  1.6, not stepping as ETSI 6.3.1). Decided exceptions to 1.6 (maintainer,
-  2026-11-17): in a Calman session the DV packet is Calman's own (with
-  `signal_color_space` 0), and the Standard DV infoframe follows the
-  display's Dolby block (Amlogic's rule; 1.6 sends HDMI 1.4b with HDMI_VIC
-  1 in every timing when a client sets 1.6's dv_interface to 1, its kernel
-  value for that layout; our conf's dv_interface 1 is Low Latency), with
-  PiTPG's two departures from that rule kept (maintainer, 2026-11-09 and
-  2026-11-17): a 12-byte version 1 block always gets the Dolby form, and
-  4K24/25/30 and 4096x2160p24 no HDMI_VIC. The metadata id is 0 in all
-  three packet forms, PiTPG's included (2026-11-18). The Standard DV packet
-  had taken over PiTPG's L4 block and start sequence, which neither 1.6 nor
-  Calman send; outside Calman and PiTPG sessions it now sends 1.6's
-  packet, checked against 1.6's templates by `t/renderer_dovi_metadata.t`
-  (ChadB, 2026-11-17). Outside PiTPG sessions the tunnel codes and the
-  metadata pixels are 1.6's: its matrix, 8-bit grid and packing, but
-  rounded exactly (integer arithmetic on the GPU, not 1.6's float32,
-  which a CPU model of its shader puts one Cb/Cr code off for ~0.03 % of
-  the colours; 1.6 on the GPU is not read back), without 1.6's
-  picture-path faults (fp16 texels 240..254, odd pixels paired with the
-  next pair), with exactly 3072 metadata pixels (1.6's stray white one
-  left out); PiTPG sessions keep PiTPG's arithmetic and parity embedding,
-  also for a first draw without an apply. The Pi 5 renderer flavour has
-  the same pg16 shaders, byte for byte (`pg16_shaders` 1, maintainer
-  2026-11-23; not read back on a Pi 5; its PiTPG-session image shader is
-  still its own). The
-  WebUI's DV series codes, and every patch it sends, lie on 1.6's 8-bit
-  grid whenever the cable
-  carries that tunnel (`pg_dv_tunnel_pg16_grid`: Standard in the running
-  renderer's start record when it runs in Dolby Vision, else the conf;
-  no PiTPG packet, no full
-  tunnel; the Patch Companion gets the same codes),
-  so a run records the code sent and a grey's target
-  follows it (maintainer, 2026-11-18); a colour's target stays its
-  reference colour, as at 8 bits in SDR, and a custom greyscale profile
-  keeps its targets (`t/renderer_pg16_tunnel.t`, `t/pitpg_backend.t`,
-  `t/webui_dv_tunnel_grid.t`, `t/meter_series_dv_tunnel_grid.t`,
-  `t/webui_dv_grid_chart_targets.t`, `t/meter_saturation_series_steps.t`).
+  from a standard, the maintainer decides.
+- Dolby Vision: read `.claude/reference/dolby-vision.md` before you
+  change, review or describe (release notes, posts, answers) anything DV
+  puts on the cable or into a measurement: the packet and infoframe
+  (HDMI_VIC, dv_interface), the metadata id, the tunnel codes and metadata
+  pixels on the Pi 4 or Pi 5, Calman and PiTPG sessions in DV, and the DV
+  codes and targets of the WebUI, its meter series and the Patch
+  Companion. It holds the decisions taken so far, with dates and tests.
 
 ## Research, don't guess
 
@@ -125,6 +95,8 @@ Run what applies and say what was and was not checked:
   worktree's `git ls-files` (main's tree is other code). If prove dies in
   `YAMLish/Reader.pm` before the first test, `t/.prove-state` is damaged:
   delete it (the release gate moves it aside itself).
+  `t/pg_v4l2_runtime.t` and `t/pg_drm_player_runtime.t` run only in the
+  pgen-build VM (Linux, `libdrm-dev`; the `image-build` skill).
 - Perl: `perl -I usr/share/PGenerator -c <file>` for scripts in `usr/bin`,
   `usr/sbin`; modules are checked by `tools/runtime/pgen_release_checks.sh`
   (`pgen_release_check_runtime_syntax`)
@@ -158,7 +130,7 @@ Run what applies and say what was and was not checked:
   sudo actions, port-85 templates). `t/webui_called_functions.t` covers the
   page JS.
 - Independent review before a code change is reported done: a fresh agent
-  (same model; the `pgen-reviewer` agent in `.claude/agents/`) gets the diff, the code it touches and this file, and none
+  (same model; the `pgen-reviewer` agent in `.claude/agents/`) gets the diff, the code it touches, this file and the reference this file points to for that area, and none
   of the reasoning behind the change. It reports each finding as confirmed
   (repro) or plausible (code path); verify each one, fix or answer it, and
   report what the review found.
@@ -178,7 +150,9 @@ reviewed / confirmed on the Pi. The release refuses to run without `t/` or
 - **Bit exactness**: prove codes with `/usr/bin/pgen_scanout x y w h`
   (4:2:2 reads R=Y; 4:4:4 reads R=Cb G=Cr B=Y; standard DV reads packed
   tunnel bytes). Renderer sources and the rebuilt binaries
-  (`usr/sbin/PGeneratord`, `.dv`) are committed together.
+  (`usr/sbin/PGeneratord`, `.dv`) are committed together. A new patched
+  `vc4.ko` needs its md5 updated in `tools/image-build/run-in-vm.sh`
+  (hard-coded there).
 - `clean_files` deletes every file directly in `/var/lib/PGenerator/` on each
   daemon start; persistent data goes in a subdirectory (e.g. `playlists/`).
 - The daemon reads the WebUI files at start: a WebUI deploy needs
@@ -200,19 +174,9 @@ written-out password, dummy bodies,
 system writes outside `pgen-pi deploy` and unchecked probes; `pi_stop.py` stops the end of
 a turn while a snapshot is open.
 
-- Before probes or restarts: `pgen-pi busy`, as its own step (runs
-  `.claude/skills/pi/scripts/pi_calman_busy.sh` on the Pi, the only copy;
-  `tools/pi_calman_busy.sh` must stay identical, t/pi_calman_busy.t). It
-  counts only client traffic and prints the
-  log line behind each reason; read that line before telling the user the
-  Pi is in use (an older copy on the Pi matched every "Calman" log line):
-  - In use: an established socket from a foreign peer on 85/2100/2101, or
-    client traffic (`Calman RAW:`/`UPGCI:`/RPC, `INIT` without a close)
-    from a foreign peer within the last minutes.
-  - Not in use: `Calman G1: basic_alignment …` (the alignment plate drawn
-    at every daemon start), `Calman GCI: suppressed save …` (written by
-    WebUI/API config posts), and our own probes (`peer=127.0.0.1` or the
-    Mac's IP).
+- Before probes or restarts: `pgen-pi busy`, as its own step. It prints
+  the log line behind each reason; read that line before telling the user
+  the Pi is in use (what counts as a session: the `pi` skill, "Busy").
   If a real session is found, do not touch the device; ask. If it is
   still unclear after checking, ask and say what you found.
 - Deploy safely: `pgen-pi deploy` (names the Pi file's version against
@@ -247,8 +211,9 @@ a turn while a snapshot is open.
   PUSH-DISABLED-only-BlackJoker90-fork`, also in
   `vendor/ArgyllCMS_ICC4.4` (its remote is BigShoots/ArgyllCMS_ICC4.4).
 - Releases are OTA packages (`tools/release-ota.sh`); a flashable image
-  only for boot/base-system changes or when the maintainer asks. The
-  release script refuses untracked runtime files: `git add` new files first.
+  only for boot/base-system changes or when the maintainer asks, built
+  and uploaded with the `image-build` skill. The release script refuses
+  untracked runtime files: `git add` new files first.
 - Release notes (`build/release-<ver>/notes.md` and GitHub releases): write
   in English with a user-first layout and collapsible `<details>` blocks for
   technical and test details:
@@ -275,67 +240,3 @@ a turn while a snapshot is open.
   never describes something users cannot install yet.
 - Commits, pushes, releases, reboots and deploys need the maintainer's OK.
 - Code comments, commit messages and repo docs are in English.
-
-## Building a flashable image
-
-Pi 4 images are built in the Parallels VM `pgen-build` by
-`tools/image-build/run-in-vm.sh` (background: `tools/BUILD-IMAGE-PI4.md`).
-It builds the working tree of `MAC_REPO` (default: the main checkout)
-onto the v2.12.1 base in `/root/pgbase`, runs `prove` as root, fscks the
-result, checks version, renderer, `drm_override.so` and the patched
-`vc4.ko` (md5 hard-coded in the script: update it with the module),
-compresses with xz, copies the `.img.xz` and `_sha256.txt` to
-`$MAC_REPO/build/` and deletes the copies in the VM.
-
-- An image of a released version is built from that tag, never from
-  `main`: `git clone` the main checkout (a clone, not a worktree: the
-  script needs a `.git` directory) to `/Users/fabio/pgen-image-<ver>`,
-  `git checkout v<ver>`, `git remote set-url --push origin PUSH-DISABLED`,
-  then copy in the local-only `tools/`, `build/runtime-cache/` and `t/`.
-- `t/` is not versioned: run the full suite (`prove -j16 -Q
-  --state=slow,save --statefile=t/.prove-state -r t`) in the clone first. A
-  red file there is acceptable only if it tests code after the tag (birth
-  time `stat -f %SB` after the release's `publishedAt`, and a later commit
-  it belongs to); remove those from the clone's `t/` and name them. Any
-  other red stops the build.
-- Start it detached and poll the log:
-  `prlctl exec pgen-build 'MAC_REPO=/media/psf/Home/pgen-image-<ver> nohup bash /media/psf/Home/pgen-image-<ver>/tools/image-build/run-in-vm.sh > /root/image-build-<ver>.log 2>&1 &'`
-  Wait for `^ERROR` or `] Done: ` in the log (a `pgrep -f run-in-vm`
-  watcher matches its own command line and never ends). `t/` runs there
-  as root on Linux: a test that needs macOS or a non-root user skips
-  there, it does not fail. The VM has no headless Chrome or Playwright,
-  no clang and no expect, and cannot run the macOS-only tests:
-  run-in-vm.sh and run-in-vm-pi5.sh accept exactly those skip reasons
-  (`VM_SKIP_REASONS`, the same value in both, `t/release_order.t`;
-  passed as `PGEN_ALLOW_SKIPPED_REASONS`), so the build goes on and the
-  log lists those files under "Warning: tests skipped parts this machine
-  cannot run"; the Mac's release gate runs them. The tests that need
-  SDL3 headers or numpy run there (`libsdl3-dev`, `python3-numpy` in the
-  VM since 2026-11-23). Any other skip stops the
-  build (an inherited `PGEN_ALLOW_SKIPPED=1`,
-  `PGEN_RELEASE_PREFLIGHT_DONE=1` or `PGEN_SKIP_RELEASE_CHECKS=1` is
-  dropped there: an image built by these scripts always runs the checks).
-  `t/pg_v4l2_runtime.t` and `t/pg_drm_player_runtime.t` run only
-  there (Linux, `libdrm-dev` installed in the VM since 2026-11-19; the
-  scripts refuse to start without it; the target builds use their
-  chroots, not these headers).
-  The log must end in "Output image OK" and "Done", and must not say
-  "node not found" (nodejs is installed in the VM since 2026-11-16; the
-  release checks parse the WebUI JS with it).
-- GitHub limits assets to 2 GiB: split the `.img.xz` into `.001` (1992294400
-  bytes) and `.002`, write `<name>.img.xz.sha256` for the joined file, upload
-  the three with `gh release upload v<ver> -R BlackJoker90/rampecho`, then
-  compare sizes and GitHub's per-asset sha256 digest with the local parts.
-- Notes: add a "Flashing the image" section (join, check, flash; Export /
-  Import System Settings) with `gh release edit --notes-file`; on a release
-  that is not "latest" pass `--latest=false`.
-- From 3.0.2 the image boots without the initramfs: the builder runs
-  `update-migrations.d/3.0.2-boot-no-initramfs.sh` on it (the script OTA
-  devices run), and `run-in-vm.sh` checks `root=PARTUUID`, the commented
-  initramfs line and that `/boot/loader/boot_dir` (the WebUI's copy of the
-  boot files) equals the boot partition. An image of an older tag keeps
-  the initramfs.
-- An image serves its MAJOR.MINOR family: the updater only offers updates
-  within it (`same_ota_family`), so a device of another family re-flashes.
-- Afterwards: the VM copy is gone (the script deletes it); the Mac copies in
-  `build/` and the clone are deleted on the maintainer's word.
