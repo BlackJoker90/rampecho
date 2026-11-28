@@ -4044,7 +4044,7 @@ void ofxRPI4Window::SetModeProperties()
 			if (!batch_req)
 				updateDoVi_Infoframe(dv_status, dv_interface); // Enable Standard DOVI infoframe
 			struct avi_infoframe avi_infoframe;
-			avi_infoframe.colorimetry = 9; // BT.2020 RGB for standard Dolby Vision tunneling
+			avi_infoframe.colorimetry = 0; // Default (C=0 No Data) for standard Dolby Vision tunneling, matching Pi 4 / Murideo SIX-G / PGenerator 1.6
 			avi_infoframe.rgb_quant_range = 2; //Full range [0-255]
 			avi_infoframe.output_format = avi_info.output_format; //0 RGB444; //YCrCb422, doesnt work with YCrCb420
 				avi_infoframe.max_bpc = avi_info.max_bpc; // only works in 8 bit
