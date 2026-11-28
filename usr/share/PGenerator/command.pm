@@ -999,6 +999,65 @@ sub pattern_generator_has_drm_master (@) {
  return 0;
 }
 
+# The ids of the framebuffers the renderer made, from the debugfs list
+# ("framebuffer[N]:", then "\tallocated by = PGeneratord" or
+# "PGeneratord.dv"; the console's is "[fbcon]"). That list is read under
+# the framebuffer list's own mutex only, not the modeset locks: a renderer
+# stuck in the driver after a kernel oops in its first commit holds those
+# (renderer_stuck_in_kernel), and the atomic state would wait for them for
+# good (drm_framebuffer_info in the Pi's drm.ko, 5.10.89). The kernel
+# removes a client's framebuffers when it closes the device, so once the
+# old renderer has ended only the new one's are listed.
+our $dri_framebuffer_glob="/sys/kernel/debug/dri/*/framebuffer";
+sub renderer_framebuffers (@) {
+ my @ids;
+ foreach my $list (glob($dri_framebuffer_glob)) {
+  open(my $fh,'<',$list) or next;
+  my $fb="";
+  while(my $line=<$fh>) {
+   if($line=~/^framebuffer\[(\d+)\]:/) { $fb=$1; next; }
+   $fb="" if($line=~/^\S/);
+   if($fb ne "" && $line=~/^\tallocated by = PGeneratord(?:\.dv)?\s*$/) {
+    push(@ids,$fb);
+    $fb="";
+   }
+  }
+  close($fh);
+ }
+ return @ids;
+}
+
+# Wait at most $seconds after a renderer start, over early when it has
+# made a third framebuffer, or when it has ended (with $hold the whole
+# $seconds still pass then: the pause before a retry, in which a helper's
+# DRM master is let go). It makes one per frame, only in swapBuffers
+# (ofxRPI4Window), after the page flip of the frame before has completed
+# (it exits when a flip does not come within 1 s), and removes the one
+# before that: a third id of its own means two flips have completed, its
+# EGL/GBM setup is through and its frames reach the output. Its first
+# commit alone does not prove that, it is nonblocking, and neither does a
+# second buffer, whose flip may still be lost. The kernel gives freed ids
+# out again (read on the Pi 4: a running renderer cycles through three);
+# should it reuse one this early, the wait keeps its bound. A renderer
+# that lists nothing here (debugfs unreadable, another format) is waited
+# for the whole time, as before. 1 when it was seen flipping.
+sub renderer_wait_flipping (@) {
+ my ($seconds,$hold)=@_;
+ my $until=Time::HiRes::time()+$seconds;
+ my %seen;
+ while(Time::HiRes::time() < $until) {
+  if(!&pattern_generator_is_running()) {
+   my $left=$until-Time::HiRes::time();
+   select(undef,undef,undef,$left) if($hold && $left > 0);
+   return 0;
+  }
+  $seen{$_}=1 for(&renderer_framebuffers());
+  return 1 if(keys(%seen) >= 3);
+  select(undef,undef,undef,0.02);
+ }
+ return 0;
+}
+
 # Block until the renderer holds DRM master, or $timeout seconds elapse. The
 # renderer drops master transiently during its own EGL/GBM init and re-acquires
 # it, so poll rather than sample once. Returns 1 if it became master, 0 on
