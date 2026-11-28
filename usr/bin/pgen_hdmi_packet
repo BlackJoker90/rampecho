@@ -15,7 +15,7 @@
 # them, it prints "ERR ..." and no slot line, without opening /dev/mem.
 # PGEN_DEVICE_TREE and PGEN_DEV_MEM replace /proc/device-tree and /dev/mem
 # in tests. The device's caller (PGenerator_cmd.pl HDMI_PACKET, run through
-# sudo -E) removes both before it starts this script.
+# sudo) removes both before it starts this script.
 import mmap
 import os
 import re

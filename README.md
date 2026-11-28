@@ -145,7 +145,7 @@ Without a display, the renderer waits instead of failing. The UI says so in a ba
 
 ### 📦 Safer OTA updates
 
-Updates come from **this fork's releases**. The dialog shows the release notes and download progress. You can **reinstall or roll back** to an earlier release. Packages are about **20 % smaller** (stripped binaries, no duplicate files, unused Python modules dropped). Update checks are cached (gentle on the GitHub API), and cross-site requests to the WebUI are refused.
+Updates come from **this fork's releases**. The dialog shows the release notes and download progress. You can **reinstall or roll back** to an earlier release. Packages are about **20 % smaller** (stripped binaries, no duplicate files, unused Python modules dropped). Update checks are cached (gentle on the GitHub API), and cross-site requests to the WebUI are refused. **Updates are signed:** the Pi installs a package only when its checksum carries a signature by the fork's release key (ECDSA P-256, checked with the Pi's own `openssl`) and names exactly the release asked for. An unsigned or altered package, or an older one passed off as a newer release, is refused before anything is touched.
 
 ### 🧹 Small things that add up
 
@@ -392,7 +392,7 @@ rampecho: **Scaling Type in the WebUI**, applies without a reboot
 
 **OTA**<br/>
 Original: latest release only<br/>
-rampecho: release notes, progress, **reinstall / rollback**, ~20 % smaller packages
+rampecho: **signed packages** (refused unless signed by the fork's release key), release notes, progress, **reinstall / rollback**, ~20 % smaller packages
 
 **Device commands over the network**<br/>
 Original: any client on port 85 could rewrite the boot configuration, network and WiFi, or reboot the Pi, and a web page could send them through a browser<br/>
@@ -493,7 +493,7 @@ From then on the Pi follows this fork's releases. The update source is `usr/shar
 
 ### ⬆️ Updating
 
-- **Web UI:** **System → Software Update → Check for Updates → Install Update.** The dialog shows the release notes and download progress, then restarts the service. The release dropdown also lets you reinstall the current release or roll back to an earlier one; from 3.0 that includes the 2.13.x releases. Coming from 2.13.51 or older, install 2.13.52 first: only from there does the updater offer 3.0.
+- **Web UI:** **System → Software Update → Check for Updates → Install Update.** The dialog shows the release notes and download progress, then restarts the service. The release dropdown also lets you reinstall the current release or roll back to an earlier one, as long as that release carries a signature (the updater refuses unsigned ones). Coming from 2.13.51 or older, install 2.13.52 first: only from there does the updater offer 3.0.
 - **SSH** (`root` / `PGenerator!!$`):
 
   ```bash
@@ -872,7 +872,7 @@ GETSTATUS:CLIENTNAME=PerceptualPro
 
 PGenerator 1.6 treats this as a normal `GETSTATUS`. rampecho also shows the sanitised name in its status bar while the socket is connected. `CLIENTNAME:<name>` works as a standalone command, and so do the aliases `CLIENT_NAME` and `SOFTWARE`. `=` may replace `:`. Names are limited to 64 safe characters, and commands end with `0x02 0x0d`.
 
-**Privilege separation:** the daemon runs as `pgenerator`. Privileged operations (config writes, service control, updates) go through `PGenerator_cmd.pl` via `sudo`, with base64-encoded environment arguments. The WebUI refuses cross-site requests, and it answers only under the device's own names: an IP address, `rampecho.local`, `pgenerator.local`, `localhost` and its host name (as set, and its first part bare or with `.local`). Any other name, a router's DNS name such as `pgenerator.fritz.box` included, gets a page (for `/api/` paths a JSON error) naming the IP address and `rampecho.local`. This keeps a web page from reaching the WebUI under a name of its own (DNS rebinding). It also answers local networks only: loopback, the private ranges (`10.x`, `172.16–31.x`, `192.168.x`), link-local (`169.254.x`) and `100.64–127.x` (carrier NAT, Tailscale and other VPNs). A request from any other address, such as a port forwarded from the internet, gets a JSON error. A proxy or tunnel on the LAN or on the device itself counts as local: what it forwards is served. The device's own networks (access point, Bluetooth, USB) can only be set to private ranges.
+**Privilege separation:** the daemon runs as `pgenerator`. Privileged operations (config writes, service control, updates) go through `PGenerator_cmd.pl` via `sudo`, with the arguments base64-encoded in `PG_CMD`. sudo resets the environment for it and keeps `PG_CMD` besides its own short default list; the helper sets `PATH` to the system directories itself, so nothing the caller puts in its environment decides which programs run as root. The WebUI refuses cross-site requests, and it answers only under the device's own names: an IP address, `rampecho.local`, `pgenerator.local`, `localhost` and its host name (as set, and its first part bare or with `.local`). Any other name, a router's DNS name such as `pgenerator.fritz.box` included, gets a page (for `/api/` paths a JSON error) naming the IP address and `rampecho.local`. This keeps a web page from reaching the WebUI under a name of its own (DNS rebinding). It also answers local networks only: loopback, the private ranges (`10.x`, `172.16–31.x`, `192.168.x`), link-local (`169.254.x`) and `100.64–127.x` (carrier NAT, Tailscale and other VPNs). A request from any other address, such as a port forwarded from the internet, gets a JSON error. A proxy or tunnel on the LAN or on the device itself counts as local: what it forwards is served. The device's own networks (access point, Bluetooth, USB) can only be set to private ranges.
 
 ### ⚙️ Configuration
 

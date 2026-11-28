@@ -204,7 +204,7 @@ sub sudo_cmd {
  my @args=@_;
  my $env=join(" ",map { encode_base64($_,"") } @args);
  local $ENV{PG_CMD}=$env;
- my $out=`timeout 15 sudo -E /usr/bin/PGenerator_cmd.pl 2>/dev/null`;
+ my $out=`timeout 15 sudo /usr/bin/PGenerator_cmd.pl 2>/dev/null`;
  return defined($out) ? $out : "";
 }
 

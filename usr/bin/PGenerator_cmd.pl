@@ -45,6 +45,9 @@ use Fcntl qw(:flock);
 #########################################
 BEGIN { use lib $shared_dir="/usr/share/PGenerator"; }
 chdir($shared_dir);
+# As root (through sudo) the programs this helper and the updater start come
+# from the system directories only: sudo keeps the caller's PATH.
+$ENV{PATH}="/usr/sbin:/usr/bin:/sbin:/bin" if($>==0);
 
 #########################################
 #                 My pm                 #
@@ -68,6 +71,8 @@ $i=0;
 for(split(" ",$ENV{$pg_cmd_env})) { $ARGV[$i++]=decode_base64($_); }
 $action=$ARGV[0];
 $0=basename($0)." $action";
+# The updater's check that the daemon user still reaches this helper.
+if(defined $action && $action eq "PING") { print "OK\n"; exit(0); }
 
 #
 # main
@@ -145,8 +150,9 @@ sub hdmi_packet_probe(@) {
  }
  my $probe="/usr/bin/pgen_hdmi_packet";
  if(!-x $probe) { print "ERR $probe missing\n"; exit 1; }
- # The caller's environment arrives through sudo -E (SETENV): the read
- # goes to the real device tree and /dev/mem, never to a test's stand-ins.
+ # sudo passes only PG_CMD on (env_keep in sudoers); this stays as a second
+ # guard: the read goes to the real device tree and /dev/mem, never to a
+ # test's stand-ins.
  delete @ENV{qw(PGEN_DEVICE_TREE PGEN_DEV_MEM)};
  system($probe,@slots);
  exit(0);

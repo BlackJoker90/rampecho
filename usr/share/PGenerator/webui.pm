@@ -2811,7 +2811,7 @@ sub webui_handle_request (@) {
     my $cmd_b64=encode_base64("REBOOT","");
     # The reply is out (closed above); the short wait only lets the
     # browser read it before the renderer and the network go down.
-    system("(sleep 0.5 && PG_CMD=\"$cmd_b64\" sudo -E /usr/bin/PGenerator_cmd.pl) &");
+    system("(sleep 0.5 && PG_CMD=\"$cmd_b64\" sudo /usr/bin/PGenerator_cmd.pl) &");
    }
    elsif($path eq "/api/power") {
     # Power-off request. Reply before issuing HALT so the client sees a
@@ -2822,7 +2822,7 @@ sub webui_handle_request (@) {
     close($client);
     undef $client;
     my $cmd_b64=encode_base64("HALT","");
-    system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo -E /usr/bin/PGenerator_cmd.pl) &");
+    system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo /usr/bin/PGenerator_cmd.pl) &");
    }
    elsif($path eq "/api/modes") {
     my $json=&webui_modes_json();
@@ -3047,7 +3047,7 @@ sub webui_handle_request (@) {
     close($client);
     undef $client;
     my $cmd_b64=encode_base64("BASH_CMD","")." ".encode_base64("PGPLUS_APPLY","").($version ne "" ? " ".encode_base64($version,"") : "");
-    system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo -E /usr/bin/PGenerator_cmd.pl) &");
+    system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo /usr/bin/PGenerator_cmd.pl) &");
    }
    elsif($path eq "/api/boot/memory") {
     # Pi 4 (BiasiLinux): the firmware GPU split (gpu_mem) is the graphics
@@ -3085,7 +3085,7 @@ sub webui_handle_request (@) {
       close($client);
       undef $client;
       my $cmd_b64=encode_base64("SET_CMA_MEMORY","")." ".encode_base64("$cma_val","");
-      system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo -E /usr/bin/PGenerator_cmd.pl) &");
+      system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo /usr/bin/PGenerator_cmd.pl) &");
      }
      elsif($memory_model eq "cma") {
       my $r='{"status":"error","message":"This Raspberry Pi 5 uses the CMA pool: send cma_mb (default, 64, 96, 128, 192, 256, 320, 384, 448 or 512)"}';
@@ -3099,7 +3099,7 @@ sub webui_handle_request (@) {
       close($client);
       undef $client;
       my $cmd_b64=encode_base64("SET_GPU_MEMORY","")." ".encode_base64("$gpu_val","");
-      system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo -E /usr/bin/PGenerator_cmd.pl) &");
+      system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo /usr/bin/PGenerator_cmd.pl) &");
      } else {
       my $r='{"status":"error","message":"Invalid GPU memory value"}';
       my $len=length($r);
