@@ -48,6 +48,9 @@ sub fork_pattern_daemon (@) {
   # longer delays it. The pattern ports open after the boot plate.
   my $video_clean=&video_playback_startup_cleanup();
   &lg_startup_scan_prepare();
+  # Before any port is bound: the last daemon's HDMI link monitor can hold
+  # one of its listeners.
+  &webui_hdmi_link_watch_stop_leftover() if(defined(&webui_hdmi_link_watch_stop_leftover));
   threads->create(\&webui_http)->detach();
   threads->create(\&webui_mdns)->detach();
   &pattern_generator_start() if($video_clean);
