@@ -703,12 +703,19 @@ sub calman_pattern_source_range (@) {
 
 # Black in the codes the renderer gets. SOURCE_RANGE=LIMITED codes are
 # video levels, so code 0 would sit below black: YCbCr links carry it as
-# Y=0 instead of 16/64/256. Standard DV is an 8-bit RGB Full tunnel where
-# code 0 (Y=0) is true black in 0-255 (PC / LG 6-series Relative) mode and
-# clamps to black in 16-235 (Video) mode, matching PGenerator 1.6 and
-# Murideo SIX-G (code 16 / 256 lit up the surround as gray in 0-255 mode).
+# Y=0 instead of 16/64/256. Standard DV is an 8-bit RGB Full tunnel carrying
+# 12-bit Y'CbCr: in Relative (dv_map_mode=2, 0-255 / PC levels) code 0 (Y=0)
+# is black and 256 (16) lights up the surround as gray, whereas in Absolute (1)
+# and Perceptual (0) (16-235 / Video levels) Murideo SIX-G sends legal black
+# Y=256 (calmanv5.dll 0x10688298 / 0x10689730) rather than Y=0 sub-black.
 sub calman_black_bg (@) {
- return "0,0,0" if(&calman_dv_source_max() > 0);
+ if(&calman_dv_source_max() > 0) {
+  # Renderer defaults unset dv_map_mode to 2 (Relative / 0-255): match it.
+  my $mm=(defined $pgenerator_conf{"dv_map_mode"} && $pgenerator_conf{"dv_map_mode"} ne "")
+         ? int($pgenerator_conf{"dv_map_mode"}) : 2;
+  return "0,0,0" if($mm == 2);
+  return "256,256,256";
+ }
  return "0,0,0" if(&calman_pattern_source_range() ne "LIMITED");
  my $black=16*(&calman_target_max()+1)/256;
  return "$black,$black,$black";
