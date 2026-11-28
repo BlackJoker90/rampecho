@@ -1214,14 +1214,12 @@ sub webui_wait_for_dovi_wire (@) {
 
 # The renderer can take DRM master and still die a moment later in its
 # EGL/GBM setup (e.g. no EGL config for the requested surface). Hold
-# "ready" until it has stayed up for a short settle window.
+# "ready" until it has stayed up for a short settle window, or until it
+# is seen flipping (renderer_wait_flipping), which it does only after
+# that setup.
 sub webui_renderer_stays_up (@) {
  my $seconds=shift || 3;
- my $deadline=Time::HiRes::time()+$seconds;
- while(Time::HiRes::time() < $deadline) {
-  return 0 if(!&pattern_generator_is_running());
-  Time::HiRes::sleep(0.2);
- }
+ &renderer_wait_flipping($seconds);
  return &pattern_generator_is_running() ? 1 : 0;
 }
 

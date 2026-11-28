@@ -642,7 +642,9 @@ sub load_new_pattern_file (@) {
   &pattern_generator_start(1);
  } elsif(!&pattern_generator_is_running()) {
   &pattern_generator_start(1);
-  select(undef,undef,undef,0.6);
+  # Over early once the renderer flips (its setup is through); one that
+  # ended gets the whole pause before the retry.
+  &renderer_wait_flipping(0.6,1);
   if(!&pattern_generator_is_running()) {
    &log("load_new_pattern_file: renderer not running after first start, retrying (DRM master race)");
    select(undef,undef,undef,0.4);
