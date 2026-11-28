@@ -30,6 +30,12 @@ PACKET_RAM_FALLBACK = {0: 0xfef01b00, 1: 0xfef06b00}
 STRIDE = 0x24               # 9 words per slot
 DT = os.environ.get("PGEN_DEVICE_TREE") or "/proc/device-tree"
 DEV_MEM = os.environ.get("PGEN_DEV_MEM") or "/dev/mem"
+DEBUGFS_DRI = os.environ.get("PGEN_DEBUGFS_DRI") or "/sys/kernel/debug/dri"
+# Linux 6.9+ DRM HDMI connector debugfs files (0400, raw packed infoframes from
+# hdmi_infoframe_pack): used on non-BCM2711 boards (Pi 5) without touching
+# /dev/mem. Slot 1 (vendor/VSIF) is not mapped here because Pi 5 DV VSIF is
+# written outside connector_state->hdmi.infoframes.
+DEBUGFS_SLOTS = {2: "avi", 7: "hdr_drm"}
 
 
 def board_compatible():
@@ -96,8 +102,28 @@ def packet_ram(port):
 
 
 def regs_file(port):
-    found = glob.glob("/sys/kernel/debug/dri/*/hdmi%d_regs" % port)
-    return found[0] if found else "/sys/kernel/debug/dri/1/hdmi%d_regs" % port
+    found = sorted(glob.glob("%s/*/hdmi%d_regs" % (DEBUGFS_DRI, port)))
+    return found[0] if found else "%s/1/hdmi%d_regs" % (DEBUGFS_DRI, port)
+
+
+def read_debugfs_slots(slots, connector):
+    """Read Linux 6.9+ raw packed HDMI infoframes from debugfs (slots 2, 7)."""
+    out = {}
+    if not connector or connector == "none":
+        return out
+    for slot in slots:
+        fname = DEBUGFS_SLOTS.get(slot)
+        if not fname:
+            continue
+        found = sorted(glob.glob("%s/*/%s/infoframes/%s" % (DEBUGFS_DRI, connector, fname)))
+        if not found:
+            continue
+        try:
+            with open(found[0], "rb") as f:
+                out[slot] = f.read(64)
+        except (IOError, OSError):
+            pass
+    return out
 
 
 def packet_config(regs):
@@ -138,14 +164,39 @@ def read_slots(slots, packet_base):
 def main():
     slots = [int(a) for a in sys.argv[1:]] or [1, 3, 7]
     compatible = board_compatible()
+    port, name = connected_port()
     if "brcm,bcm2711" not in compatible:
         # The packet RAM address and layout are the BCM2711's; on another
         # chip (BCM2712: soc@107c000000, no "/soc" node) the fallback
-        # address would read some other device through /dev/mem.
-        print("ERR packet RAM read on BCM2711 only (board: %s)" % (
-            ", ".join(compatible) or "unknown"))
+        # address would read some other device through /dev/mem. On Linux
+        # 6.9+ (Pi 5) read the kernel's debugfs infoframes for AVI/HDR DRM.
+        dfs = read_debugfs_slots(slots, name)
+        if not dfs:
+            print("ERR packet RAM read on BCM2711 only (board: %s)" % (
+                ", ".join(compatible) or "unknown"))
+            return
+        cfg = packet_config(regs_file(port))
+        print("port=%s hdmi=%d source=debugfs" % (name, port))
+        for slot, raw in sorted(dfs.items()):
+            # Check both global VC4_HDMI_RAM_PACKET_ENABLE (bit 16) and the
+            # slot bit when hdmiN_regs is readable; emit "?" when unreadable
+            # (matching the BCM2711 path below).
+            if cfg is None:
+                enabled = "?"
+            else:
+                enabled = "1" if ((cfg & 0x10000) and ((cfg >> slot) & 1)) else "0"
+            if len(raw) >= 4:
+                header = [raw[0], raw[1], raw[2]]
+                body = list(raw[3:3 + header[2] + 1])
+                print("slot=%d enabled=%s type=%02x version=%02x length=%02x bytes=%s" % (
+                    slot, enabled, header[0], header[1], header[2],
+                    ":".join("%02x" % x for x in body)))
+            else:
+                # Emit a 1-byte zero body (PB0) so enabled=1 with an empty
+                # debugfs file parses as type=00 (a counted mismatch) instead
+                # of returning undef ("unreadable").
+                print("slot=%d enabled=%s type=00 version=00 length=00 bytes=00" % (slot, enabled))
         return
-    port, name = connected_port()
     base = packet_ram(port)
     cfg = packet_config(regs_file(port))
     print("port=%s hdmi=%d packet=0x%08x" % (name, port, base))

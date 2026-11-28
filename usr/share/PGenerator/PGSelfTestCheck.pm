@@ -417,7 +417,7 @@ sub packet_fields {
  }
  my $sum=$type+$ver+$len;
  $sum+=$b[$_] for(0..$len);
- return { enabled=>$on, type=>$type, version=>$ver, length=>$len, pb=>[@b[1..$len]], checksum_ok=>(($sum & 0xff) == 0 ? 1 : 0) };
+ return { enabled=>$on, type=>$type, version=>$ver, length=>$len, pb0=>$b[0], pb=>[@b[1..$len]], checksum_ok=>(($sum & 0xff) == 0 ? 1 : 0) };
 }
 
 # Field-by-field differences between the DRM payload sent and expected:

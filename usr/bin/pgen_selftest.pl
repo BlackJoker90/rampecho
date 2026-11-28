@@ -769,9 +769,23 @@ for(my $n=0;$n<@scenarios;$n++) {
  # The AVI comes from the kernel log, where the Pi 4's patched vc4 writes
  # it at every mode set: there a readable log without a single AVI line
  # is a module that lost the patch, and the AVI checks fail. The Pi 5's
- # vc4 does not log them: there it is not verified.
- my $avi_not_logged=(!$if->{unread} && !$if->{count} && board_is_pi5()) ? 1 : 0;
- my $avi_unread=($if->{unread} || $avi_not_logged) ? 1 : 0;
+ # vc4 does not log them, so read its debugfs infoframes/avi via HDMI_PACKET
+ # slot 2; only when neither source yields an AVI is it marked not verified.
+ my $avi_from_debugfs=0;
+ my $avi_slot_off=0;
+ if(!@avi && !$if->{count} && board_is_pi5()) {
+  my $pkt2=&sudo_cmd("HDMI_PACKET",2);
+  my $p=PGSelfTestCheck::packet_fields($pkt2,2);
+  if($p && $p->{enabled} eq "0") {
+   $avi_slot_off=1;
+   $avi_from_debugfs=1;
+  } elsif($p && $p->{enabled} eq "1" && $p->{type} == 0x82 && defined($p->{pb0}) && ref($p->{pb}) eq "ARRAY" && @{$p->{pb}} >= 5) {
+   @avi=($p->{type},$p->{version},$p->{length},$p->{pb0},@{$p->{pb}});
+   $avi_from_debugfs=1;
+  }
+ }
+ my $avi_not_logged=(!$if->{unread} && !$if->{count} && !$avi_from_debugfs && board_is_pi5()) ? 1 : 0;
+ my $avi_unread=(($if->{unread} && !$avi_from_debugfs) || $avi_not_logged) ? 1 : 0;
  my %fmt_name=(0=>"RGB",1=>"YCbCr 4:2:2",2=>"YCbCr 4:4:4");
  my $avi_format=@avi > 4 ? ($fmt_name{($avi[4]>>5)&3} || "?") : "";
  my $avi_q=@avi > 6 ? (($avi[6]>>2)&3) : -1;
@@ -786,7 +800,9 @@ for(my $n=0;$n<@scenarios;$n++) {
  my $kms=PGSelfTestCheck::hdmi_link_from_state(&dri_state());
  $entry->{link}{kms}=$kms if($kms && grep { $_ ne "connector" } keys %$kms);
 
- if($if->{unread}) {
+ if($avi_slot_off) {
+  add_check($entry,"AVI infoframe",$format,"not sent (slot 2 off)",0);
+ } elsif($if->{unread} && !$avi_from_debugfs) {
   add_check($entry,"AVI infoframe",$format,"not verified (kernel log not readable)",0,1);
   $entry->{unverified}=1;
  } elsif($avi_not_logged) {
@@ -795,10 +811,10 @@ for(my $n=0;$n<@scenarios;$n++) {
  } else {
   add_check($entry,"AVI colour format",$format,$avi_format || "none",$avi_format eq $format);
  }
- if(!$avi_unread && $format eq "RGB") {
+ if(!$avi_unread && !$avi_slot_off && $format eq "RGB") {
   my $want_q=(($sc->{range} || "") eq "FULL") ? 2 : 1;
   add_check($entry,"AVI quantisation",$want_q == 2 ? "Full" : "Limited",$avi_q == 2 ? "Full" : $avi_q == 1 ? "Limited" : "Default",$avi_q == $want_q);
- } elsif(!$avi_unread && $format=~/^YCbCr/ && @avi > 8) {
+ } elsif(!$avi_unread && !$avi_slot_off && $format=~/^YCbCr/ && @avi > 8) {
   # YQ (PB5 bits 7..6): 0 Limited, 1 Full
   my $want_yq=(($sc->{range} || "") eq "FULL") ? 1 : 0;
   my $avi_yq=($avi[8]>>6)&3;
@@ -815,10 +831,12 @@ for(my $n=0;$n<@scenarios;$n++) {
  }
  # HDR metadata from the packet gate (bit 7), so a frame left over from an
  # earlier HDR mode cannot pass SDR; the kernel log when the register is
- # unreadable.
+ # unreadable. On Pi 5 (no DRM IF: in dmesg), reading AVI via debugfs does
+ # not supply DRM infoframe logs either.
  my $pkt=$reg{"HDMI_RAM_PACKET_CONFIG"};
  my $drm_on=defined($pkt) ? (($pkt & 0x80) ? 1 : 0) : $if->{drm};
- if(!defined($pkt) && $avi_unread) {
+ my $drm_log_unread=($avi_unread || $avi_from_debugfs) ? 1 : 0;
+ if(!defined($pkt) && $drm_log_unread) {
   add_check($entry,"HDR metadata",$sc->{drm} ? "DRM infoframe" : "none","not verified (packet gate not readable, ".($if->{unread} ? "kernel log not readable" : "no infoframes in the kernel log").")",0,1);
   $entry->{unverified}=1;
  } elsif($sc->{drm}) {
@@ -856,7 +874,7 @@ for(my $n=0;$n<@scenarios;$n++) {
   &dv_vsif_form_check($entry,$sc,$conf,$vsif,scalar(&vc4_dv_vsif_forms()),($capcode == 200 && ref($caps) eq "HASH") ? $caps : undef);
  }
  $sc->{matrix}=%$conf ? PGSelfTestCheck::ycc_matrix_for(@{PGSelfTestCheck::avi_colorimetry_expect($sc->{config}{signal_mode},$format,$conf->{colorimetry},$sc->{config}{dv_transport})},$h) : "";
- &infoframe_checks($entry,$sc,$format,$conf,\@avi,&dri_state(),$sc->{drm} ? &sudo_cmd("HDMI_PACKET",7) : "",$avi_unread);
+ &infoframe_checks($entry,$sc,$format,$conf,\@avi,&dri_state(),$sc->{drm} ? &sudo_cmd("HDMI_PACKET",7) : "",($avi_unread || $avi_slot_off));
 
  # A framebuffer the probe cannot decode fails as a check of its own, so the
  # score, the detail table and the copied report name it.

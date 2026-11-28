@@ -13939,7 +13939,9 @@ sub webui_hdmi_link_info (@) {
  }
  close($fh);
  return undef if(!defined($reg{"HDMI_DEEP_COLOR_CONFIG_1"}));
- my %bpc_for_depth=(4=>8,5=>10,6=>12);
+ # Upstream rpi-6.12.y (Pi 5) writes 0 for 8 bpc and for 4:2:2, whereas the
+ # Pi 4's patched vc4.ko writes 4 for 8 bpc (matches pgen_selftest.pl).
+ my %bpc_for_depth=(0=>8,4=>8,5=>10,6=>12);
  my $bpc=$bpc_for_depth{$reg{"HDMI_DEEP_COLOR_CONFIG_1"} & 0xf} || 0;
  my $gcp=($reg{"HDMI_GCP_CONFIG"} || 0) & 0x80000000 ? 1 : 0;
  my $tmds=0;

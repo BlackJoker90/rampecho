@@ -151,9 +151,9 @@ sub hdmi_packet_probe(@) {
  my $probe="/usr/bin/pgen_hdmi_packet";
  if(!-x $probe) { print "ERR $probe missing\n"; exit 1; }
  # sudo passes only PG_CMD on (env_keep in sudoers); this stays as a second
- # guard: the read goes to the real device tree and /dev/mem, never to a
- # test's stand-ins.
- delete @ENV{qw(PGEN_DEVICE_TREE PGEN_DEV_MEM)};
+ # guard: the read goes to the real device tree, /dev/mem and debugfs, never
+ # to a test's stand-ins.
+ delete @ENV{qw(PGEN_DEVICE_TREE PGEN_DEV_MEM PGEN_DEBUGFS_DRI)};
  system($probe,@slots);
  exit(0);
 }
@@ -299,12 +299,23 @@ sub wifi_radio_user_disabled () {
  return (defined $val && $val eq "0") ? 1 : 0;
 }
 
+sub wifi_rfkill_is_soft_blocked () {
+ my $node=&wifi_rfkill_sysfs_node();
+ return 1 if($node eq "");
+ my $soft=&read_from_file("$node/soft");
+ chomp($soft);
+ return ($soft eq "0") ? 0 : 1;
+}
+
 sub ensure_wlan_client_ready(@) {
  my $interface=shift;
  &ensure_wifi_conf();
  # Honor the persisted radio-off intent: do NOT unblock here. This runs on every
- # status poll and would otherwise clobber a user's wifi_radio=0 toggle.
- &pgen_system_quiet($rfkill,"unblock","wifi") if(defined $rfkill && &pgen_cmd_exists($rfkill) && !&wifi_radio_user_disabled());
+ # status poll and would otherwise clobber a user's wifi_radio=0 toggle. Also
+ # skip rfkill when sysfs already shows soft=0 so status polls do not flood the
+ # systemd journal with redundant unblock events.
+ &pgen_system_quiet($rfkill,"unblock","wifi")
+  if(defined $rfkill && &pgen_cmd_exists($rfkill) && !&wifi_radio_user_disabled() && &wifi_rfkill_is_soft_blocked());
  &pgen_system_quiet($ip,"link","set",$interface,"up") if(defined $ip && &pgen_cmd_exists($ip));
  &pgen_service_action("","wpa_supplicant","start");
  if(defined $wpa_supplicant && &pgen_cmd_exists($wpa_supplicant) && !-S "$dir_wpa/$interface") {
@@ -1110,30 +1121,37 @@ sub reset_hdmi_output(@) {
 }
 
 # The connected HDMI connector's id and its property values from one
-# "modetest -c": enum and range as the number, a blob as 0 when empty and
-# "set" otherwise. ("",{}) when there is none.
+# "modetest -a -c" (falling back to "modetest -c"): enum and range as the
+# number, a blob as 0 when empty and "set" otherwise. ("",{}) when none.
+# -a exposes DRM_MODE_PROP_ATOMIC properties (e.g. Pi 5 "output format").
 sub hdmi_connector_props(@) {
  my ($connector_id,%props,$name);
  $connector_id="";
- open(MT,"timeout 3 $modetest -c 2>/dev/null|") or return ("",{});
- while(<MT>) {
-  if(/^(\d+)\s+\d+\s+(\S+)\s+(\S+)/) {
-   my ($id,$status,$conn)=($1,$2,$3);
-   last if($connector_id ne "");
-   $connector_id=$id if($status eq "connected" && $conn=~/^HDMI/);
-   next;
+ for my $mt_flags ("-a","") {
+  $connector_id="";
+  %props=();
+  $name=undef;
+  open(MT,"timeout 3 $modetest $mt_flags -c 2>/dev/null|") or next;
+  while(<MT>) {
+   if(/^(\d+)\s+\d+\s+(\S+)\s+(\S+)/) {
+    my ($id,$status,$conn)=($1,$2,$3);
+    last if($connector_id ne "");
+    $connector_id=$id if($status eq "connected" && $conn=~/^HDMI/);
+    next;
+   }
+   next if($connector_id eq "");
+   if(/^\t\d+ (.+):$/) { $name=$1; next; }
+   next if(!defined $name);
+   if(/^\t\tvalue:\s*(\S*)\s*$/) {
+    $props{$name}=$1 eq "" ? 0 : $1;
+    next;
+   }
+   # A blob's value is the hex dump on the lines after "value:".
+   $props{$name}="set" if(/^\t\t\t[0-9a-f]+\s*$/ && exists($props{$name}));
   }
-  next if($connector_id eq "");
-  if(/^\t\d+ (.+):$/) { $name=$1; next; }
-  next if(!defined $name);
-  if(/^\t\tvalue:\s*(\S*)\s*$/) {
-   $props{$name}=$1 eq "" ? 0 : $1;
-   next;
-  }
-  # A blob's value is the hex dump on the lines after "value:".
-  $props{$name}="set" if(/^\t\t\t[0-9a-f]+\s*$/ && exists($props{$name}));
+  close(MT);
+  last if($connector_id ne "");
  }
- close(MT);
  return ($connector_id,\%props);
 }
 
@@ -2098,13 +2116,13 @@ sub bt_status (@) {
   $devices=&pgen_capture($bluetoothctl,"devices");
  }
  if(defined $ifconfig && &pgen_cmd_exists($ifconfig)) {
-  $pan_ip=&pgen_capture($ifconfig,"pan0");
-  $pan_ip.=&pgen_capture($ifconfig,$bt_interface);
-  $pan_ip.=&pgen_capture($ifconfig,"bnep0") if($bt_interface ne "bnep0");
+  $pan_ip=&pgen_capture($ifconfig,"pan0") if(-d "/sys/class/net/pan0");
+  $pan_ip.=&pgen_capture($ifconfig,$bt_interface) if($bt_interface ne "" && -d "/sys/class/net/$bt_interface");
+  $pan_ip.=&pgen_capture($ifconfig,"bnep0") if($bt_interface ne "bnep0" && -d "/sys/class/net/bnep0");
  } elsif(defined $ip && &pgen_cmd_exists($ip)) {
-  $pan_ip=&pgen_capture($ip,"addr","show","dev","pan0");
-  $pan_ip.=&pgen_capture($ip,"addr","show","dev",$bt_interface);
-  $pan_ip.=&pgen_capture($ip,"addr","show","dev","bnep0") if($bt_interface ne "bnep0");
+  $pan_ip=&pgen_capture($ip,"addr","show","dev","pan0") if(-d "/sys/class/net/pan0");
+  $pan_ip.=&pgen_capture($ip,"addr","show","dev",$bt_interface) if($bt_interface ne "" && -d "/sys/class/net/$bt_interface");
+  $pan_ip.=&pgen_capture($ip,"addr","show","dev","bnep0") if($bt_interface ne "bnep0" && -d "/sys/class/net/bnep0");
  }
  my $pan_net="";
  if(-f $pand_default_file) {
