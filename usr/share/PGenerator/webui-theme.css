@@ -946,6 +946,18 @@ body.dv-profile-done-error #dvProfileDoneStatus{color:#e08184}
 .release-notes-h{font-weight:700;color:var(--accent);margin:10px 0 4px;font-size:var(--fs-sm)}
 .release-notes-h:first-child{margin-top:0}
 .release-notes code{font-size:var(--fs-xs);padding:1px 4px;border-radius:var(--r-xs);background:color-mix(in srgb,var(--text) 10%,transparent)}
+.release-notes-callout{--tone:var(--accent);margin:0 0 10px;padding:8px 12px;border:1px solid color-mix(in srgb,var(--tone) 40%,transparent);border-radius:var(--r-sm);background:color-mix(in srgb,var(--tone) 9%,transparent)}
+.release-notes-important,.release-notes-warning,.release-notes-caution{--tone:var(--orange)}
+.release-notes-callout-title{font-weight:700;color:var(--text);margin-bottom:4px}
+.release-notes-important .release-notes-callout-title,.release-notes-warning .release-notes-callout-title,.release-notes-caution .release-notes-callout-title{color:var(--warning-text)}
+.release-notes-callout>:last-child,.release-notes-details>div>:last-child{margin-bottom:0}
+.release-notes-details{margin:6px 0 8px}
+.release-notes-details>summary{display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;color:var(--accent);width:fit-content;list-style:none;user-select:none}
+.release-notes-details>summary::-webkit-details-marker{display:none}
+.release-notes-details>summary::before{content:'';flex:none;width:6px;height:6px;border:solid currentColor;border-width:0 1.8px 1.8px 0;transform:rotate(-45deg);transition:transform .15s ease-out;margin-right:2px}
+.release-notes-details[open]>summary::before{transform:rotate(45deg)}
+.release-notes-details>summary:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:var(--r-xs)}
+.release-notes-details>div{margin-top:6px}
 /* Software Update card: status right under the versions, notes behind a
    disclosure, then "Previous versions" as a titled section. Backup is its own
    card section below. */
@@ -969,7 +981,7 @@ body.dv-profile-done-error #dvProfileDoneStatus{color:#e08184}
 .release-pick{display:flex;max-width:100%}
 .release-pick>select{width:auto;max-width:100%;min-width:0}
 .update-hint{margin-top:8px;font-size:var(--fs-sm);color:var(--text2);line-height:1.45}
-@media(prefers-reduced-motion:reduce){.update-notes>summary::before{transition:none}}
+@media(prefers-reduced-motion:reduce){.update-notes>summary::before,.release-notes-details>summary::before{transition:none}}
 /* Update install progress dialog (runUpdate): the choice dialog's overlay and card, one bar, five steps. */
 .upd-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100001;display:flex;align-items:center;justify-content:center;padding:20px}
 .upd-modal[hidden]{display:none}

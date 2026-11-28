@@ -4857,8 +4857,20 @@ function pgConfirmReboot(o){
   const onKey=e=>{
    if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close(false);}
    else if(e.key==='Tab'){
+    // Focus stays in the card and goes round its controls: the buttons and
+    // the disclosures of the release notes (Technical details ...).
     e.preventDefault();
-    (document.activeElement===cancel?accept:cancel).focus();
+    // Inside a closed disclosure only its own summary can take focus.
+    const shut=el=>{
+     for(let d=el.parentElement&&el.parentElement.closest('details');d;d=d.parentElement&&d.parentElement.closest('details'))
+      if(!d.open&&!(el.tagName==='SUMMARY'&&el.parentElement===d)) return true;
+     return false;
+    };
+    const items=Array.prototype.filter.call(root.querySelectorAll('.pg-reboot-card summary,.pg-reboot-card button'),
+     el=>!el.disabled&&el.getClientRects&&el.getClientRects().length&&!shut(el));
+    const n=items.length,i=items.indexOf(document.activeElement);
+    const next=!n?cancel:i<0?items[e.shiftKey?n-1:0]:items[(i+(e.shiftKey?n-1:1))%n];
+    next.focus();
    }
   };
   cancel.onclick=()=>close(false);
@@ -7016,26 +7028,106 @@ function showUpdateCard(){
  if(!_updateChecked) checkUpdate();
 }
 // Release notes (GitHub Markdown) as DOM nodes: headings, bullet lists,
-// paragraphs, **bold** and `code`. Text only, never parsed as HTML.
+// paragraphs, **bold** and `code`; a quote (GitHub alert "> [!IMPORTANT]"
+// included) becomes a callout and a <details> block a closed disclosure with
+// its <summary>, both filled by the same rules; "---" rules and other tag
+// lines are left out. Text only, never parsed as HTML.
 function pgReleaseNotesNode(markdown){
  const box=document.createElement('div');
  box.className='release-notes';
+ pgReleaseNotesFill(box,String(markdown||'').split('\n'));
+ return box;
+}
+const PG_NOTES_ALERTS={note:'Note',tip:'Tip',important:'Important',warning:'Warning',caution:'Caution'};
+// HTML character references as GitHub shows them (text, not markup).
+function pgNotesEntities(s){
+ const named={amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",nbsp:' '};
+ return s.replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|amp|lt|gt|quot|apos|nbsp);/gi,(m,e)=>{
+  if(e.charAt(0)!=='#') return named[e.toLowerCase()];
+  const c=e.charAt(1).toLowerCase()==='x'?parseInt(e.slice(2),16):parseInt(e.slice(1),10);
+  return c>0&&c<=0x10ffff&&!(c>=0xd800&&c<=0xdfff)?String.fromCodePoint(c):m;
+ });
+}
+const PG_NOTES_DETAILS_OPEN=/^<details\b[^>]*>\s*(?:<summary>(.*)<\/summary>)?$/i;
+// Lines of nothing but HTML tags GitHub renders as layout (an autolink such
+// as <https://...> is text and stays).
+const PG_NOTES_TAG_LINE=/^(?:<\/?(?:details|summary|br|hr|p|div|span|picture|source|video|sub|sup|kbd|b|i|em|strong|a|center)(?=[\s/>])[^>]*>\s*)+$/i;
+function pgReleaseNotesFill(box,lines){
  const inline=(el,text)=>{
   text=text.replace(/\[([^\]]+)\]\([^)]*\)/g,'$1');
   text.split(/(\*\*[^*]+\*\*|`[^`]+`)/).forEach(part=>{
    if(!part) return;
    let node;
-   if(/^\*\*[^*]+\*\*$/.test(part)){ node=document.createElement('strong'); node.textContent=part.slice(2,-2); }
+   if(/^\*\*[^*]+\*\*$/.test(part)){ node=document.createElement('strong'); node.textContent=pgNotesEntities(part.slice(2,-2)); }
    else if(/^`[^`]+`$/.test(part)){ node=document.createElement('code'); node.textContent=part.slice(1,-1); }
-   else node=document.createTextNode(part);
+   else node=document.createTextNode(pgNotesEntities(part));
    el.appendChild(node);
   });
  };
- let list=null,para=null;
- String(markdown||'').split('\n').forEach(raw=>{
-  const line=raw.trim();
-  if(/^\S*\s*Generated with \[Claude Code\]/.test(line)) return;
-  if(!line){ list=null; para=null; return; }
+ let list=null,para=null,fence=false;
+ for(let i=0;i<lines.length;i++){
+  const line=lines[i].trim();
+  if(/^\S*\s*Generated with \[Claude Code\]/.test(line)) continue;
+  if(!line){ list=null; para=null; continue; }
+  // Lines of a ``` code block stay text as written (quotes and tags too).
+  if(/^```/.test(line)) fence=!fence;
+  if(fence||/^```/.test(line)){
+   list=null;
+   if(para) para.appendChild(document.createTextNode(' '));
+   else { para=document.createElement('p'); box.appendChild(para); }
+   para.appendChild(document.createTextNode(line));
+   continue;
+  }
+  if(line.charAt(0)==='>'){
+   list=null; para=null;
+   const inner=[];
+   for(;i<lines.length&&lines[i].trim().charAt(0)==='>';i++) inner.push(lines[i].trim().replace(/^>\s?/,''));
+   i--;
+   const q=document.createElement('div');
+   q.className='release-notes-callout';
+   const a=(inner[0]||'').trim().match(/^\[!(\w+)\]$/);
+   const kind=a&&a[1].toLowerCase();
+   if(kind&&Object.prototype.hasOwnProperty.call(PG_NOTES_ALERTS,kind)){
+    inner.shift();
+    q.classList.add('release-notes-'+kind);
+    const t=document.createElement('div');
+    t.className='release-notes-callout-title';
+    t.textContent=PG_NOTES_ALERTS[kind];
+    q.appendChild(t);
+   }
+   pgReleaseNotesFill(q,inner);
+   box.appendChild(q);
+   continue;
+  }
+  const open=line.match(PG_NOTES_DETAILS_OPEN);
+  if(open){
+   list=null; para=null;
+   const inner=[];
+   let depth=1,summary=open[1]||'';
+   let inFence=false;
+   for(i++;i<lines.length;i++){
+    const l=lines[i].trim();
+    if(/^```/.test(l)) inFence=!inFence;
+    if(inFence||/^```/.test(l)){ inner.push(lines[i]); continue; }
+    if(PG_NOTES_DETAILS_OPEN.test(l)) depth++;
+    else if(/^<\/details>$/i.test(l)&&--depth===0) break;
+    const s=depth===1&&!summary&&l.match(/^<summary>(.*)<\/summary>$/i);
+    if(s) summary=s[1];
+    else inner.push(lines[i]);
+   }
+   summary=pgNotesEntities(summary.replace(/<[^>]*>/g,'')).trim();
+   const d=document.createElement('details');
+   d.className='release-notes-details';
+   const s=document.createElement('summary');
+   s.textContent=summary||'Details';
+   d.appendChild(s);
+   const body=document.createElement('div');
+   pgReleaseNotesFill(body,inner);
+   d.appendChild(body);
+   box.appendChild(d);
+   continue;
+  }
+  if(/^([-*_])(\s*\1){2,}$/.test(line)||PG_NOTES_TAG_LINE.test(line)){ list=null; para=null; continue; }
   const h=line.match(/^#{1,6}\s+(.*)$/);
   const li=line.match(/^[-*]\s+(.*)$/);
   if(h){
@@ -7054,8 +7146,7 @@ function pgReleaseNotesNode(markdown){
    else { para=document.createElement('p'); box.appendChild(para); }
    inline(para,line);
   }
- });
- return box;
+ }
 }
 
 async function applyUpdate(){
