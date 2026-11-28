@@ -13492,14 +13492,58 @@ sub webui_hdmi_link_uevent (@) {
  return $hotplug;
 }
 
+# The link monitor's command; the leftover cleanup finds it by the same
+# words (its own pattern had drifted from them and matched nothing).
+our @hdmi_link_monitor=("timeout","600","udevadm","monitor","--kernel","--property","--subsystem-match=drm");
+
+# A monitor left behind by an earlier daemon ends only on its next write
+# into the closed pipe, or after its timeout, and it can hold a listening
+# socket of that daemon: on the Pi 4 (2026-11-28) it held 2101 or 2100 at
+# three of five restarts, and the new daemon died on "Error binding". The
+# daemon start calls this before it binds a port: the timeout wrapper and
+# its udevadm get TERM, KILL if still there after 2 s, and it returns once
+# they have ended (their sockets are closed then; a zombie has closed its
+# files), or after 1 s more.
+sub webui_hdmi_link_watch_stop_leftover (@) {
+ my @pids;
+ foreach my $words ([@hdmi_link_monitor],[@hdmi_link_monitor[2..$#hdmi_link_monitor]]) {
+  open(my $pg,"-|","pgrep","-f","^".join(" ",@$words)."\$") or next;
+  push(@pids,grep { /^\d+$/ && $_ != $$ } map { s/\s+//gr } <$pg>);
+  close($pg);
+ }
+ return 0 if(!@pids);
+ &log("HDMI link: stopping the monitor an earlier daemon left behind (pid ".join(", ",@pids).")");
+ my $alive=sub {
+  return grep {
+   my $pid=$_;
+   my $stat="";
+   if(open(my $fh,"<","/proc/$pid/stat")) { $stat=<$fh> // ""; close($fh); }
+   kill(0,$pid) && $stat!~/^\d+ \(.*\) Z/;
+  } @pids;
+ };
+ kill("TERM",@pids);
+ my $start=Time::HiRes::time();
+ my $killed=0;
+ while($alive->()) {
+  my $waited=Time::HiRes::time()-$start;
+  if(!$killed && $waited >= 2) {
+   kill("KILL",@pids);
+   $killed=1;
+  }
+  if($waited >= 3) {
+   &log("HDMI link: the monitor an earlier daemon left behind did not end (pid ".join(", ",$alive->()).")");
+   last;
+  }
+  select(undef,undef,undef,0.05);
+ }
+ return scalar(@pids);
+}
+
 sub webui_hdmi_link_watch (@) {
- # A udevadm left behind by an earlier daemon (it only ends on its next
- # write into the closed pipe, or after its timeout).
- system("pkill -f '^udevadm monitor --kernel --subsystem-match=drm' >/dev/null 2>&1");
  my $prev=&webui_hdmi_link_status();
  while(1) {
   my $ran=time();
-  my $pid=open(my $mon,"-|","timeout","600","udevadm","monitor","--kernel","--property","--subsystem-match=drm");
+  my $pid=open(my $mon,"-|",@hdmi_link_monitor);
   if($pid) {
    my %ev;
    while(my $line=<$mon>) {
