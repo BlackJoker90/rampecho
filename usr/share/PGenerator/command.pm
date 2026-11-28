@@ -732,12 +732,30 @@ sub modetest_connector_write(@) {
  if(!defined $modetest_atomic_writes) {
   $modetest_atomic_writes=(&kms_connector_has_property("Colorspace") && !&kms_connector_has_property("Colorimetry")) ? 1 : 0;
  }
- my $primary=$modetest_atomic_writes ? "-a" : "";
- my $fallback=$modetest_atomic_writes ? "" : "-a";
- system("timeout 3 $modetest $primary -w '$connector_id:$prop_name:$value' 2>/dev/null");
- return 1 if($? == 0);
- system("timeout 3 $modetest $fallback -w '$connector_id:$prop_name:$value' 2>/dev/null");
- return ($? == 0) ? 1 : 0;
+ # The value comes from PGenerator.conf, which network clients write: only
+ # a number is a property value, and no shell sees the argument.
+ return 0 if(!defined($value) || $value!~/^\d{1,10}$/ || $connector_id!~/^\d+$/ || $prop_name!~/^[A-Za-z_ ]+$/);
+ my @flags=($modetest_atomic_writes ? ("-a") : (),"-w","$connector_id:$prop_name:$value");
+ return 1 if(&modetest_run_quiet(@flags) == 0);
+ @flags=($modetest_atomic_writes ? () : ("-a"),"-w","$connector_id:$prop_name:$value");
+ return (&modetest_run_quiet(@flags) == 0) ? 1 : 0;
+}
+
+# timeout 3 $modetest <args> without a shell, its stderr discarded in the
+# child only (the daemon's threads share fd 2); the exit status as $? holds it.
+sub modetest_run_quiet(@) {
+ my @cmd=("timeout","3",split(' ',$modetest),@_);
+ my $pid=fork();
+ if(!defined $pid) {
+  system(@cmd);
+  return $?;
+ }
+ if($pid==0) {
+  open(STDERR,">","/dev/null");
+  exec(@cmd) or POSIX::_exit(127);
+ }
+ waitpid($pid,0);
+ return $?;
 }
 
 sub map_kms_colorspace(@) {
@@ -2746,7 +2764,7 @@ sub process_pid(@) {
   $pid=$_;
   $proc_file="/proc/$pid/cmdline";
   if(-f "$proc_file"){
-   open(CMD_PROC,"$proc_file");
+   open(CMD_PROC,"<",$proc_file);
    $cmd=<CMD_PROC>;
    close(CMD_PROC);
    $el_pid.="$pid "  if($cmd =~/$process/  && $action eq "get_with_pattern");
@@ -2802,7 +2820,7 @@ sub clean_files(@) {
   next if($_ eq $pattern_dynamic || $_ eq $pattern_profile || $_ eq $pattern_position || $_ eq $pattern_screensaver || $_ eq $pattern_start);
   next if($_ eq $pattern_calman1 || $_ eq $pattern_calman2 || $_ eq $pattern_calman3  || $_ eq $pattern_calman4);
   $deletable=1;
-  open(PATTERN,"$var_dir/tmp/$_");
+  open(PATTERN,"<","$var_dir/tmp/$_");
   $deletable=0 if(($row=<PATTERN>) =~/^PERMANENT=yes/);
   close(PATTERN);
   next if(!$deletable);
@@ -2822,11 +2840,39 @@ sub clean_files(@) {
 # value that is fine.
 sub cmd_conf_value_refusal (@) {
  my ($key,$value)=@_;
+ # Programs read these keys from PGenerator.conf (modetest, drm_override.so,
+ # the renderer): a signal value is a number or a word, never shell or quote
+ # characters.
+ if($value!~/^[-+0-9A-Za-z._]*$/) {
+  &log("CMD: SET_PGENERATOR_CONF_".uc($key)." refused (not a plain value)");
+  return "$key must be a plain value";
+ }
  # An empty value deletes the key (PiTPG "primaries":null); the renderer
  # then uses its default.
  return "" if($key ne "primaries" || $value=~/^[0-5]?$/);
  &log("CMD: SET_PGENERATOR_CONF_PRIMARIES:$value refused (primaries must be 0 to 5)");
  return "primaries must be 0 to 5";
+}
+
+# Commands that change the device rather than the signal: boot config,
+# memory split, network, WiFi, Bluetooth, host name, CPU governor, power.
+# From a network client (port 85 or 2100) they run only while the WebUI's
+# "System commands over the network" switch (port85_system_commands=1) is
+# on; the WebUI calls pgenerator_cmd itself and is not limited by it.
+# pgenerator_cmd matches the SET_ names anywhere in the text, so they are
+# looked for anywhere here too.
+our @network_system_commands=qw(SET_DTOVERLAY SET_BOOT_CONFIG SET_GPU_MEMORY SET_CMA_MEMORY
+ SET_BOOT_MEMORY SET_OUTPUT_RANGE SET_DISCOVERABLE SET_HOSTNAME SET_SCALING_GOVERNOR
+ SET_NET_TO_USE SET_WIFI_AP_APPLY_CONF SET_WIFI_APPLY_CONF);
+sub network_system_command_refusal (@) {
+ my $cmd=shift // "";
+ my $name="";
+ if($cmd eq "REBOOT" || $cmd eq "HALT") { $name=$cmd; }
+ else { ($name)=grep { index($cmd,"$_:")>=0 } @network_system_commands; }
+ return "" if(!defined($name) || $name eq "");
+ return "" if(($pgenerator_conf{"port85_system_commands"} // "") eq "1");
+ &log("CMD: $name from a network client refused (System commands over the network is off)");
+ return "$error_response:Refused: $name over the network is off; turn on System commands over the network in the WebUI (Settings → Network Access)";
 }
 
 sub pgenerator_cmd (@) {
@@ -2837,7 +2883,7 @@ sub pgenerator_cmd (@) {
  # Get CMD from cache or not
  #
  if(-f "$info_dir/$cmd.info") {
-  open(INFO,"$info_dir/$cmd.info");
+  open(INFO,"<","$info_dir/$cmd.info");
   while(<INFO>) {
    $response.=$_;
   }
@@ -2934,7 +2980,21 @@ sub pgenerator_cmd (@) {
  if($cmd =~/SET_NET_TO_USE:(.*)/) {
   $set_net_to_use=$1;
   ($net_start,$net_subclass,$net_to_use)=split("-",$set_net_to_use);
-  &sudo("SET_NET_TO_USE","$net_start",$net_subclass,$net_to_use);
+  # Octets only (the root helper checks again): the files it writes are
+  # sourced as shell at boot. No leading zero: "010" would
+  # pass a numeric check and be read as octal (8) by inet_aton.
+  # The device's own networks stay private (10.x, 172.16-31.x, 192.168.x):
+  # the WebUI answers local networks only, so a client on a public range
+  # it serves itself would be locked out.
+  if($set_net_to_use!~/^(?:0|[1-9]\d{0,2})-(?:0|[1-9]\d{0,2})(?:,(?:0|[1-9]\d{0,2})){2,3}-(?:0|[1-9]\d{0,2})$/ || grep { $_ > 255 } split(/[-,]/,$set_net_to_use)) {
+   &log("CMD: SET_NET_TO_USE refused (not octets)");
+   $response="$error_response:Refused: SET_NET_TO_USE takes octets only";
+  } elsif(!($net_start == 10 || ($net_start == 172 && $net_to_use >= 16 && $net_to_use <= 31) || ($net_start == 192 && $net_to_use == 168))) {
+   &log("CMD: SET_NET_TO_USE refused (not a private range)");
+   $response="$error_response:Refused: SET_NET_TO_USE takes a private range (10.x, 172.16-31.x, 192.168.x)";
+  } else {
+   &sudo("SET_NET_TO_USE","$net_start",$net_subclass,$net_to_use);
+  }
  }
  if($cmd =~/SET_WIFI_AP_APPLY_CONF:(.*)/) {
   $response=wpa_cli("WIFI_AP_APPLYCONF:$1");

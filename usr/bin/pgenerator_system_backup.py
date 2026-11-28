@@ -18,6 +18,7 @@ import os
 import posixpath
 import pwd
 import grp
+import re
 import shutil
 import sys
 import tarfile
@@ -303,6 +304,30 @@ def extract_and_verify(archive_path, staging_dir):
     return manifest
 
 
+# Keys the device keeps over an imported backup: update_repo picks the
+# repository whose releases root installs, ip_pattern/port_pattern reach a
+# root command line (serial.pm). Matched loosely (any non-ASCII-word bytes in
+# front, spaces around "="), so no spelling another reader accepts slips by.
+DEVICE_KEY_LINE = re.compile(r"^[^A-Za-z0-9_\n]*(update_repo|ip_pattern|port_pattern)[^A-Za-z0-9_=\n]*=")
+
+
+def write_conf_keeping_update_repo(source, destination, temp_path):
+    with open(source, "rb") as handle:
+        lines = handle.read().decode("latin-1").splitlines(True)
+    kept = [line for line in lines if not DEVICE_KEY_LINE.match(line)]
+    own = []
+    if os.path.isfile(destination):
+        with open(destination, "rb") as handle:
+            own = [line for line in handle.read().decode("latin-1").splitlines(True)
+                   if DEVICE_KEY_LINE.match(line)]
+    if own and not own[-1].endswith("\n"):
+        own[-1] += "\n"
+    if kept and not kept[-1].endswith("\n") and own:
+        kept[-1] += "\n"
+    with open(temp_path, "wb") as handle:
+        handle.write("".join(kept + own).encode("latin-1"))
+
+
 def copy_file_atomic(source, destination):
     parent = os.path.dirname(destination)
     if not os.path.isdir(parent):
@@ -310,7 +335,10 @@ def copy_file_atomic(source, destination):
     temp_path = destination + ".restore.tmp"
     if os.path.exists(temp_path):
         os.unlink(temp_path)
-    shutil.copyfile(source, temp_path)
+    if os.path.basename(destination) == "PGenerator.conf":
+        write_conf_keeping_update_repo(source, destination, temp_path)
+    else:
+        shutil.copyfile(source, temp_path)
     os.chmod(temp_path, 0o644)
     if os.path.basename(destination) != "PGenerator.conf":
         os.rename(temp_path, destination)

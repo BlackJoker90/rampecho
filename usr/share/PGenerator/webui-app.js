@@ -969,6 +969,8 @@ function applyConfigState(nextConfig){
  selftestMarkStale();
  const rfc=document.getElementById('resolveForceCenter');
  if(rfc) rfc.checked=String(config.resolve_force_center||'0')==='1';
+ const p85=document.getElementById('port85SystemCommands');
+ if(p85) p85.checked=String(config.port85_system_commands||'0')==='1';
  const rps=document.getElementById('resolvePatchSize');
  if(rps&&document.activeElement!==rps) rps.value=(config.resolve_patch_size&&/^\d+$/.test(String(config.resolve_patch_size)))?String(config.resolve_patch_size):'';
  const crg=document.getElementById('calman_range');
@@ -5154,11 +5156,15 @@ async function loadCecStatus(opts){
 
 __PG_LG_JS__
 
+let pgApPassSet=false;
 async function loadAP(){
  const r=await fetchJSON('/api/wifi/ap',{_quiet:true,_timeoutMs:10000});
  if(r&&r.status==='ok'){
   document.getElementById('apSsid').value=r.ssid||'';
-  document.getElementById('apPass').value=r.password||'';
+  // Write-only: the device says only whether a passphrase is set.
+  pgApPassSet=!!r.password_set;
+  const p=document.getElementById('apPass');
+  if(p&&document.activeElement!==p){p.value='';p.placeholder=pgApPassSet?'Unchanged':'Min 8 characters';}
  }
  const s=await fetchJSON('/api/wifi/ap/status',{_quiet:true,_timeoutMs:10000});
  const el=document.getElementById('apStatus');
@@ -5211,10 +5217,11 @@ async function applyAP(){
  const ssid=document.getElementById('apSsid').value.trim();
  const password=document.getElementById('apPass').value;
  if(!ssid){toast('SSID is required','err');return;}
- if(password.length<8){toast('Password must be at least 8 characters','err');return;}
+ // Empty keeps the passphrase that is set.
+ if(password.length<8&&!(password===''&&pgApPassSet)){toast('Password must be at least 8 characters','err');return;}
  const r=await fetchJSON('/api/wifi/ap',{method:'POST',
   headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password}),_timeoutMs:30000});
- if(r&&r.status==='ok'){toast('AP settings saved');if(r.warning)toast(r.warning,'warn');loadAP();}
+ if(r&&r.status==='ok'){toast('AP settings saved');if(r.warning)toast(r.warning,'warn');document.getElementById('apPass').value='';loadAP();}
  else toast(pgFailMsg('Couldn\u2019t save the access point settings',r),'err');
 }
 
@@ -5387,6 +5394,15 @@ async function resolveForceCenterChanged(on){
   if(r&&r.status==='ok') toast(on?'Resolve patches will be centered':'Resolve patches follow the sent position');
   else toast('Failed to save setting','err');
  }catch(e){ toast('Failed to save setting','err'); }
+}
+async function port85SystemCommandsChanged(on){
+ const box=document.getElementById('port85SystemCommands');
+ try{
+  const r=await fetchJSON('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({port85_system_commands:on?'1':'0'})});
+  if(r&&r.status==='ok') toast(on?'System commands over the network are on':'System commands over the network are off');
+  else { if(box) box.checked=!on; toast(pgFailMsg('Couldn\u2019t save the setting',r),'err'); }
+ }catch(e){ if(box) box.checked=!on; toast('Couldn\u2019t save the setting','err'); }
 }
 async function resolveDisconnect(){
  const r=await fetchJSON('/api/resolve/disconnect',{method:'POST'});

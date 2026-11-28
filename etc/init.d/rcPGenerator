@@ -18,9 +18,24 @@ DHCP_STARTED="/tmp/rcPGenerator.dhcp-started"
 DHCP_INIT="/etc/init.d/dhcp"
 DHCP_PID_FILE="/var/run/dhcpd.pid"
 
-. $DEFAULT_FILE
+# The root helper writes this file from network input (port 85
+# SET_NET_TO_USE): read its known keys as data, never source it.
+if [ -r "$DEFAULT_FILE" ]; then
+ while IFS='=' read -r key value || [ -n "$key" ]; do
+  value=${value#\"}; value=${value%\"}
+  case "$value" in ''|*[!0-9.]*) net_ok=0 ;; *) net_ok=1 ;; esac
+  case "$key" in
+   AP_NET) [ $net_ok = 1 ] && AP_NET=$value ;;
+   PAND_NET) [ $net_ok = 1 ] && PAND_NET=$value ;;
+   USB_NET) [ $net_ok = 1 ] && USB_NET=$value ;;
+   DIRECT_NET) [ $net_ok = 1 ] && DIRECT_NET=$value ;;
+   SCALING_GOVERNOR) case "$value" in ''|*[!a-z]*) ;; *) SCALING_GOVERNOR=$value ;; esac ;;
+  esac
+ done < "$DEFAULT_FILE"
+fi
 
-SUBNET=$(grep AP_NET /etc/default/rcPGenerator |awk -F . '{print $2}')
+SUBNET=$(echo "$AP_NET" | awk -F . '{print $2}')
+case "$SUBNET" in ''|*[!0-9]*) SUBNET=10 ;; esac
 
 #
 # Function

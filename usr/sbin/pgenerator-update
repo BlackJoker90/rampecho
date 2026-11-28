@@ -302,33 +302,111 @@ apply_cleanup() {
  return $rc
 }
 
-# The published "<tarball>.sha256" ("<hash>  <name>"). Releases from before
-# it was published have none: that is logged and the update goes on.
+# Public keys of the rampecho release signing key(s), ECDSA P-256. The
+# release script signs "<tarball>.sha256" ("<hash>  <name>") with the
+# private key, which never leaves the maintainer's machine, and publishes
+# the signature as "<tarball>.sha256.sig" (DER, openssl dgst -sha256 -sign).
+# More than one key may be listed, so a release signed with the old key can
+# bring a new one.
+ota_signing_keys() {
+ cat <<'KEYS'
+-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEK1lYZLffGoy204b9E5PHBEiyRtU0
+LyU69/l0vb1HlLiYKiJjnH8MWUFSN2LLKLELB5XMtE1geOPW0Ei1G/W1/Q==
+-----END PUBLIC KEY-----
+KEYS
+}
+
+# 0 when SIG is a signature of DATA by one of ota_signing_keys.
+verify_release_signature() {
+ local data="$1" sig="$2" dir key out rc=1
+ dir=$(mktemp -d "${TMPDIR:-/tmp}/pgen-ota-keys.XXXXXX") || return 1
+ ota_signing_keys | awk -v d="$dir" '
+  /-----BEGIN PUBLIC KEY-----/ { n++; f=d "/key" n ".pem" }
+  f != "" { print > f }
+  /-----END PUBLIC KEY-----/ { if(f != "") close(f); f="" }'
+ for key in "$dir"/key*.pem; do
+  [ -s "$key" ] || continue
+  # openssl's exit code and its own verdict, both
+  if out=$(openssl dgst -sha256 -verify "$key" -signature "$sig" "$data" 2>/dev/null) && [ "$out" = "Verified OK" ]; then
+   rc=0
+   break
+  fi
+ done
+ rm -rf "$dir"
+ return $rc
+}
+
+# The daemon user reaches the root helper the way the daemon does (sudo, the
+# request in PG_CMD): the new helper answers PING with OK. A package whose
+# sudo rules or callers do not fit would otherwise start and answer
+# /api/ping while every privileged action fails. Root only (tests run the
+# apply path as a normal user); a helper without PING (an older release
+# installed on purpose) answers nothing, so it is checked by name first.
+helper_answers() {
+ [ "$(id -u)" = "0" ] || return 0
+ grep -q '"PING"' /usr/bin/PGenerator_cmd.pl 2>/dev/null || return 0
+ local out
+ out=$(su -s /bin/sh pgenerator -c 'PG_CMD=$(printf PING | base64) timeout 20 sudo -n /usr/bin/PGenerator_cmd.pl' 2>/dev/null) || true
+ [ "$out" = "OK" ]
+}
+
+# The release's signed "<tarball>.sha256" ("<hash>  <name>"): the signature
+# must come from a rampecho release key, the name must be the downloaded
+# asset of release VERSION (so an older signed archive cannot be passed off
+# as a newer release), and the hash must match. Without a valid signature
+# nothing is installed: a missing .sha256 or .sig (also a 404), no
+# connection, a 5xx or an empty file stops the update.
 verify_tarball_checksum() {
- local tarball="$1" url="$2" sum_file expected actual code
+ local tarball="$1" url="$2" version="$3" sum_file sig_file expected actual code name listed
  sum_file="$tarball.sha256"
- # Only a release without a published .sha256 (404) goes on without it. Any
- # other failure (no connection, timeout, 5xx, an empty file) stops the
- # update: it must not skip the check it cannot make.
+ sig_file="$tarball.sha256.sig"
  code=$(curl $CURL_OPTS -H "$GITHUB_UA" -o "$sum_file" -w '%{http_code}' "$url.sha256" 2>/dev/null) || true
- if [ "$code" = "404" ]; then
-  rm -f "$sum_file"
-  log_msg "No published SHA-256 for this release; relying on the archive check"
-  return 0
- fi
  if [ "$code" != "200" ] || [ ! -s "$sum_file" ]; then
   rm -f "$sum_file"
   log_msg "ERROR: Cannot fetch the release's SHA-256 (HTTP ${code:-none})"
   return 1
  fi
+ code=$(curl $CURL_OPTS -H "$GITHUB_UA" -o "$sig_file" -w '%{http_code}' "$url.sha256.sig" 2>/dev/null) || true
+ if [ "$code" != "200" ] || [ ! -s "$sig_file" ]; then
+  rm -f "$sum_file" "$sig_file"
+  log_msg "ERROR: Cannot fetch the release's signature (HTTP ${code:-none}); only signed releases are installed"
+  return 1
+ fi
+ if ! command -v openssl >/dev/null 2>&1; then
+  rm -f "$sum_file" "$sig_file"
+  log_msg "ERROR: openssl is missing: the release's signature cannot be checked"
+  return 1
+ fi
+ if ! verify_release_signature "$sum_file" "$sig_file"; then
+  rm -f "$sum_file" "$sig_file"
+  log_msg "ERROR: The release's signature is not from a rampecho release key"
+  return 1
+ fi
+ rm -f "$sig_file"
+ name="${url##*/}"
+ name="${name%%\?*}"
+ listed=$(awk 'NR==1{print $2}' "$sum_file")
+ listed="${listed#\*}"
  expected=$(awk 'NR==1{print $1}' "$sum_file" | tr 'A-F' 'a-f')
  rm -f "$sum_file"
+ if [ -z "$listed" ] || [ "$listed" != "$name" ]; then
+  log_msg "ERROR: The signed SHA-256 is for ${listed:-no file}, not $name"
+  return 1
+ fi
+ case "$listed" in
+  *[-_]"$version".tar.gz|*[-_]v"$version".tar.gz|*[-_]"$version"[-_]*|*[-_]v"$version"[-_]*) ;;
+  *)
+   log_msg "ERROR: The signed archive $listed is not release $version"
+   return 1
+   ;;
+ esac
  actual=$(sha256sum "$tarball" | awk '{print $1}')
  if [ "${#expected}" != "64" ] || [ "$expected" != "$actual" ]; then
   log_msg "ERROR: SHA-256 mismatch (expected ${expected:-none}, got $actual)"
   return 1
  fi
- log_msg "SHA-256 verified: $actual"
+ log_msg "Signature and SHA-256 verified: $actual"
 }
 
 # Free space for the extracted files plus the rollback copy (both about the
@@ -601,9 +679,12 @@ list_releases() {
    my @p=split(/\./,$ver);
    next if(!$families{"$p[0].$p[1]"});
    my $has=0;
+   # Only a signed release is installable: its tarball needs a .sha256.sig.
+   my %names=map { (($_->{name}//"")=>1) } grep { ref($_) eq "HASH" } @{$rel->{assets}||[]};
    for my $a (@{$rel->{assets}||[]}) {
     my $n=$a->{name}//"";
     next if($n!~/\.tar\.gz$/i || $n!~/^(?:pgenerator[-_]?plus|rampecho)[-_]v?[0-9]/i);
+    next if(!$names{"$n.sha256.sig"});
     if($target eq "pi5-bookworm-armhf") { $has=1 if($n=~/pi5[-_]bookworm[-_]armhf\.tar\.gz$/i); }
     else { $has=1 if($n!~/pi5/i); }
    }
@@ -644,13 +725,17 @@ release_field() {
    # rampecho-<ver>... is accepted too, for a later switch of the asset name;
    # releases keep pgenerator-plus-* while devices with an older updater
    # (which only knows that name) are in the field.
+   # Only a signed tarball counts: the release must carry its .sha256.sig
+   # (verify_tarball_checksum checks the signature itself).
    if(ref($rel->{assets}) eq "ARRAY") {
+    my %names = map { (($_->{name} // "") => 1) } grep { ref($_) eq "HASH" } @{$rel->{assets}};
     for my $asset (@{$rel->{assets}}) {
      next if(ref($asset) ne "HASH");
      my $url = $asset->{browser_download_url} // "";
      my $name = $asset->{name} // "";
      next if($url !~ /\.tar\.gz$/i);
      next if($name !~ /^(?:pgenerator[-_]?plus|rampecho)[-_]v?[0-9]/i);
+     next if(!$names{"$name.sha256.sig"});
      my $match = 0;
      if($target eq "pi5-bookworm-armhf") {
       $match = 1 if($name =~ /^(?:pgenerator[-_]?plus|rampecho)[-_]v?[0-9][0-9A-Za-z._]*[-_]pi5[-_]bookworm[-_]armhf\.tar\.gz$/i);
@@ -709,7 +794,8 @@ major_version() {
 # 2.13>3.0: 3.0.0 is the rampecho rename of 2.13.x, an overlay like any
 # 2.13.x update; 2.13.x devices take it over the air instead of re-flashing.
 # 3.0>2.13 is the way back ("Previous versions": a 3.0.x device may install
-# 2.13.52 or newer by hand). The update check always takes the newest
+# 2.13.52 or newer by hand, from 3.0.11 on only a release that carries a
+# signature, see verify_tarball_checksum). The update check always takes the newest
 # reachable release, so a 3.0.x device is never offered a 2.13.x release
 # while a 3.0.x one exists.
 OTA_BRIDGES="2.13>3.0 3.0>2.13"
@@ -1065,8 +1151,8 @@ case "$cmd" in
   fi
 
   if [ -z "$asset_url" ]; then
-   log_msg "ERROR: No $UPDATE_TARGET OTA asset (.tar.gz) found in release $latest of $UPDATE_REPO"
-   echo "ERROR: No .tar.gz asset for target $UPDATE_TARGET found in release"
+   log_msg "ERROR: No signed $UPDATE_TARGET OTA asset (.tar.gz with .sha256.sig) found in release $latest of $UPDATE_REPO"
+   echo "ERROR: No signed .tar.gz asset for target $UPDATE_TARGET found in release"
    exit 1
   fi
 
@@ -1110,8 +1196,8 @@ case "$cmd" in
   fi
 
   set_update_state verifying "Verifying the download"
-  if ! verify_tarball_checksum "$tarball" "$asset_url"; then
-   echo "ERROR: Update archive checksum mismatch or not verifiable"
+  if ! verify_tarball_checksum "$tarball" "$asset_url" "$latest"; then
+   echo "ERROR: Update archive not signed by rampecho, or its checksum does not match"
    rm -f "$tarball"
    exit 1
   fi
@@ -1193,6 +1279,12 @@ case "$cmd" in
    log_msg "ERROR: PGenerator API did not recover after updating to $latest"
    echo "ERROR: PGenerator did not come back after update"
    LAST_ERROR="rampecho $latest did not start"
+   exit 1
+  fi
+  if ! helper_answers; then
+   log_msg "ERROR: The root helper does not answer the daemon user after updating to $latest (sudo rules)"
+   echo "ERROR: rampecho $latest cannot reach its root helper"
+   LAST_ERROR="rampecho $latest cannot reach its root helper"
    exit 1
   fi
   APPLY_DONE=1

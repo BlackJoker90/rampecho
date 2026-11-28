@@ -3,7 +3,11 @@ Cmnd_Alias PGENERATOR_METER = /bin/bash /usr/bin/spotread_wrapper.sh *, /bin/bas
 Cmnd_Alias PGENERATOR_CCSS = /usr/bin/python3 /usr/bin/ccss_create.py *, /usr/bin/python2 /usr/bin/ccss_create.py *, /usr/bin/python /usr/bin/ccss_create.py *
 Cmnd_Alias PGENERATOR_BACKUP = /usr/bin/python3 /usr/bin/pgenerator_system_backup.py *
 Cmnd_Alias PGENERATOR_KILL = /usr/bin/pkill *, /usr/bin/kill *
-pgenerator ALL = (root) NOPASSWD:SETENV: PGENERATOR_CMD
+# The root helper takes its request from PG_CMD (base64 arguments) and
+# no SETENV: env_reset stays on for it, PG_CMD is kept besides sudo's own
+# default list (callers run sudo without -E; the helper sets PATH itself).
+Defaults!PGENERATOR_CMD env_keep += "PG_CMD"
+pgenerator ALL = (root) NOPASSWD: PGENERATOR_CMD
 pgenerator ALL = (root) NOPASSWD: PGENERATOR_METER
 pgenerator ALL = (root) NOPASSWD: PGENERATOR_CCSS
 pgenerator ALL = (root) NOPASSWD: PGENERATOR_BACKUP

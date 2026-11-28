@@ -1657,6 +1657,30 @@ sub pattern_daemon {
        }
       }
      }
+     # Any web page can make a browser POST text to these ports (no
+     # preflight for text/plain): the header block would be one junk
+     # command and every line of the body a command. A connection is
+     # closed with everything it sent when it starts like an HTTP request
+     # other than the served "GET /", when its first command carries an
+     # HTTP header line, or when a "GET /" holds a command terminator (a
+     # header value a page chose would otherwise be cut out as a command).
+     # Only the first 8 KiB are looked at (a request's header block is
+     # there), so a large upload is not copied and searched on every read.
+     if(!$pattern_http_cleared{$connection}) {
+      my $have=length($cmd{$connection} // "");
+      my $start=($have < 8192) ? ($cmd{$connection} // "").substr($key,0,8192-$have) : "";
+      my $first=$start;
+      $first=~s/(?:$end_cmd_string|$end_cmd_string_calman).*//s;
+      my $is_get=($start=~/\A[\r\n]*GET \//) ? 1 : 0;
+      if($start=~/\A[\r\n]*(?:POST|PUT|DELETE|PATCH|OPTIONS|HEAD|CONNECT|TRACE) \S/
+         || ($is_get && length($first) < length($start))
+         || (!$is_get && $first=~/^(?:Host|Origin|Referer|User-Agent|Content-Type|Content-Length|Sec-Fetch-[A-Za-z]+):/mi)) {
+       &log("Pattern port: HTTP request from ".($client_ip{$connection} || "")." refused");
+       &close_connection($connection,"HTTP request on a pattern port");
+       last;
+      }
+      $pattern_http_cleared{$connection}=1 if($have+length($key) >= 8192 || index($key,$end_cmd_string)>=0 || index($key,$end_cmd_string_calman)>=0);
+     }
      # Port 85 and 2100 commands end with a terminator ($end_cmd_string,
      # $end_cmd_string_calman). One read can carry several commands, or the
      # start of the next: cut the buffered bytes into whole commands, handle
@@ -3780,10 +3804,11 @@ sub pattern_daemon {
       shift(@el_cmd);
       for(@el_cmd) {
        chomp($_);
-       $response_tmp.="$_:".&pgenerator_cmd($_)."\n";
+       $response_tmp.="$_:".(&network_system_command_refusal($_) || &pgenerator_cmd($_))."\n";
       }
      } else {
-      $response_tmp=&pgenerator_cmd($1);
+      my $net_cmd=$1;
+      $response_tmp=&network_system_command_refusal($net_cmd) || &pgenerator_cmd($net_cmd);
      }
      chomp($response_tmp);
      # A refused command (a setting outside its values, a mode the link
@@ -4195,6 +4220,7 @@ sub close_connection {
  $calman{$connection}=0;
  $cmd{$connection}="";
  delete $pending_cmd{$connection};
+ delete $pattern_http_cleared{$connection};
  delete $client_ip{$connection};
  delete $hcfr_client_quant_range{$connection};
  delete $rpc_client{$connection};

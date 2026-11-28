@@ -1793,6 +1793,15 @@ sub webui_http (@) {
    if($fno == $listen_fno) {
     my $client=$http_server->accept();
     next if(!$client);
+    # A peer from outside the local networks is closed here, before it is
+    # peeked, queued or counted against the pending limit (unlogged: a
+    # scanner must not fill the log in tmpfs). One without a readable
+    # address goes on; the worker refuses it (webui_client_local).
+    my $accept_peer=eval { $client->peerhost() };
+    if(defined($accept_peer) && $accept_peer ne "" && !&webui_peer_local($accept_peer)) {
+     eval { close($client); };
+     next;
+    }
     # Overload valve: shed the oldest waiter rather than let the pending set
     # grow without bound and exhaust our descriptors.
     if(scalar(keys %pending) >= $WEBUI_MAX_PENDING) {
@@ -1961,6 +1970,99 @@ sub _webui_reject_request (@) {
  eval { $client->blocking(1); };
  eval { print $client "HTTP/1.1 $status\r\nContent-Type: application/json\r\nContent-Length: ".length($r)."\r\nConnection: close\r\n\r\n$r"; };
  &log("WebUI: request rejected ($status): $message");
+}
+
+# DNS rebinding: a page on a name its owner points at this device's
+# address reaches the WebUI as same-origin, with that name in Host, and can
+# read every answer. Only the device's own names are served: an IP literal,
+# localhost, the names its mDNS responder answers (@webui_mdns_hostnames,
+# bare or .local) and its host name (as written, and its first label bare or
+# .local). A request without a Host line passes (HTTP/1.0; no browser sends
+# one); a Host line that is present but none of these is refused, a router's
+# DNS name included (pgenerator.fritz.box: its suffix is not ours to trust).
+# A value longer than a DNS name and a port is refused before any pattern
+# runs over it.
+sub webui_host_allowed (@) {
+ my ($host,$hostname)=@_;
+ return 1 if(!defined($host));
+ return 0 if(length($host) > 300);
+ my $h=lc($host);
+ $h=~s/^[ \t]+//; $h=~s/[ \t\r]+\z//;
+ return 1 if($h=~/^\[[0-9a-f:.]+\](?::\d{1,5})?$/);
+ return 0 if($h!~/^([a-z0-9.\-]+?)\.?(?::\d{1,5})?$/);
+ my $name=$1;
+ if($name=~/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/) {
+  return ($1 <= 255 && $2 <= 255 && $3 <= 255 && $4 <= 255) ? 1 : 0;
+ }
+ my @own=("localhost",@webui_mdns_hostnames);
+ if(defined($hostname) && length($hostname) <= 300) {
+  (my $own=lc($hostname))=~s/[\s\x00]+//g;
+  $own=~s/\.\z//;
+  my $label=qr/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?/;
+  if($own=~/^($label)(?:\.$label)*$/) {
+   my $first=$1;
+   return 1 if($name eq $own);
+   push(@own,$first);
+  }
+ }
+ foreach my $o (@own) { return 1 if($name eq $o || $name eq "$o.local"); }
+ return 0;
+}
+
+# The WebUI serves local networks only (maintainer 2026-11-27): a peer
+# from loopback, a private range (RFC 1918), link-local or the shared
+# 100.64/10 range (carrier NAT, Tailscale and other VPNs). A port forwarded
+# from the internet by mistake (or by UPnP) then reaches nothing. The
+# WebUI listens on IPv4 only (0.0.0.0). Anything else is refused, "" and
+# undef included: a peer that resets the connection after sending its
+# request leaves no peer address, but its bytes are still read (seen on
+# the Pi's kernel 5.10, 2026-11-27).
+sub webui_peer_local (@) {
+ my $ip=shift;
+ return 0 if(!defined($ip) || $ip!~/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+ my ($o1,$o2,$o3,$o4)=($1,$2,$3,$4);
+ return 0 if($o1 > 255 || $o2 > 255 || $o3 > 255 || $o4 > 255);
+ return 1 if($o1 == 127 || $o1 == 10);
+ return 1 if($o1 == 172 && $o2 >= 16 && $o2 <= 31);
+ return 1 if($o1 == 192 && $o2 == 168);
+ return 1 if($o1 == 169 && $o2 == 254);
+ return 1 if($o1 == 100 && $o2 >= 64 && $o2 <= 127);
+ return 0;
+}
+
+# Whether the connection comes from a local network: its peer address by
+# webui_peer_local. A Unix-domain socket (no network at all: the tests'
+# socket pairs) counts as local; a network socket whose peer address
+# cannot be read does not.
+sub webui_client_local (@) {
+ my $client=shift;
+ my $ip=eval { $client->peerhost() };
+ return &webui_peer_local($ip) if(defined($ip) && $ip ne "");
+ my $local=eval { getsockname($client) };
+ return 0 if(!defined($local) || length($local) < 2);
+ my $family=eval { Socket::sockaddr_family($local) };
+ return (defined($family) && $family == Socket::AF_UNIX()) ? 1 : 0;
+}
+
+# The answer to a request under a name that is not the device's: where to
+# open the WebUI instead (the port it was reached on kept when not 80). It
+# names no part of the request. API paths get JSON with the same message,
+# which the companions show as the error.
+sub webui_host_refused_answer (@) {
+ my ($path,$local_ip,$local_port)=@_;
+ my $ip=(defined($local_ip) && $local_ip=~/^\d{1,3}(?:\.\d{1,3}){3}$/ && $local_ip ne "0.0.0.0") ? $local_ip : "";
+ my $port=(defined($local_port) && $local_port=~/^\d{1,5}$/ && $local_port ne "80") ? ":$local_port" : "";
+ my @urls=(($ip ne "" ? ("http://$ip$port/") : ()),"http://rampecho.local$port/");
+ my $text="This name is not one of the device's own, so rampecho does not answer under it. Open ".join(" or ",@urls)." instead.";
+ if(defined($path) && $path=~m{^/api/}) {
+  return ("application/json",'{"status":"error","message":"'.$text.'"}');
+ }
+ my $links=join(" or ",map { "<a href=\"$_\">$_</a>" } @urls);
+ (my $html_text=$text)=~s/Open .*/Open $links instead./;
+ return ("text/html; charset=utf-8","<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>rampecho</title>"
+  ."<style>body{font:16px/1.5 system-ui,sans-serif;margin:2rem 1rem;max-width:36rem;background:#fff;color:#111}"
+  ."\@media (prefers-color-scheme:dark){body{background:#111;color:#eee}a{color:#8cf}}</style></head>"
+  ."<body><h1>Open rampecho by its own address</h1><p>$html_text</p></body></html>");
 }
 
 # The page opened under the old name, pgenerator.local, moves to
@@ -2255,6 +2357,18 @@ sub webui_handle_request (@) {
     $req.=$chunk;
    }
 
+   # Local networks only, before anything else is read or answered (a
+   # peer from elsewhere must not hold a worker over a slow body either).
+   if(!&webui_client_local($client)) {
+    my $peer=eval { $client->peerhost() } // "unknown";
+    my ($m,$p)=$req=~/^([A-Z]{1,10})\s+(\S{0,200})/;
+    &log("WebUI: refused ".($m // "?")." ".($p // "?")." from $peer (not a local network)");
+    eval { $client->blocking(1); };
+    my $r='{"status":"error","message":"rampecho answers on local networks only"}';
+    eval { print $client "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: ".length($r)."\r\nConnection: close\r\n\r\n$r"; };
+    return;
+   }
+
    # Read body if Content-Length present
    if($req=~/Content-Length:\s*(\d+)/i) {
     my $cl=$1;
@@ -2324,7 +2438,24 @@ sub webui_handle_request (@) {
     $origin_foreign=1 if($origin_host eq "" || $origin_host ne $host);
    }
 
-   if($method eq "OPTIONS") {
+   # The Host line as sent ($request_host above takes only a plain one);
+   # undef when there is none. Greedy, and trimmed in webui_host_allowed:
+   # a lazy capture before [ \t]* backtracks over a long run of blanks in
+   # quadratic time.
+   my $request_host_line=($req=~/^Host:[ \t]*([^\r\n]*)/mi) ? $1 : undef;
+   my $own_hostname="";
+   if(defined($request_host_line) && defined($hostname_file) && open(my $hfh,"<",$hostname_file)) {
+    local $/; $own_hostname=<$hfh> // ""; close($hfh);
+   }
+
+   if(!&webui_host_allowed($request_host_line,$own_hostname)) {
+    (my $shown=substr($request_host_line,0,80))=~s/[^\x21-\x7e]/?/g;
+    &log("WebUI: refused $method $path for Host $shown (not a name of this device)");
+    my $local_port=eval { $client->sockport() } || "";
+    my ($type,$answer)=&webui_host_refused_answer($path,$request_local_ip,$local_port);
+    print $client "HTTP/1.1 403 Forbidden\r\nContent-Type: $type\r\nCache-Control: no-store\r\nContent-Length: ".length($answer)."\r\n$cors\r\n$answer";
+   }
+   elsif($method eq "OPTIONS") {
     print $client "HTTP/1.1 204 No Content\r\n$cors\r\n";
    }
    elsif($origin_foreign) {
@@ -2680,7 +2811,7 @@ sub webui_handle_request (@) {
     my $cmd_b64=encode_base64("REBOOT","");
     # The reply is out (closed above); the short wait only lets the
     # browser read it before the renderer and the network go down.
-    system("(sleep 0.5 && PG_CMD=\"$cmd_b64\" sudo -E /usr/bin/PGenerator_cmd.pl) &");
+    system("(sleep 0.5 && PG_CMD=\"$cmd_b64\" sudo /usr/bin/PGenerator_cmd.pl) &");
    }
    elsif($path eq "/api/power") {
     # Power-off request. Reply before issuing HALT so the client sees a
@@ -2691,7 +2822,7 @@ sub webui_handle_request (@) {
     close($client);
     undef $client;
     my $cmd_b64=encode_base64("HALT","");
-    system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo -E /usr/bin/PGenerator_cmd.pl) &");
+    system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo /usr/bin/PGenerator_cmd.pl) &");
    }
    elsif($path eq "/api/modes") {
     my $json=&webui_modes_json();
@@ -2916,7 +3047,7 @@ sub webui_handle_request (@) {
     close($client);
     undef $client;
     my $cmd_b64=encode_base64("BASH_CMD","")." ".encode_base64("PGPLUS_APPLY","").($version ne "" ? " ".encode_base64($version,"") : "");
-    system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo -E /usr/bin/PGenerator_cmd.pl) &");
+    system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo /usr/bin/PGenerator_cmd.pl) &");
    }
    elsif($path eq "/api/boot/memory") {
     # Pi 4 (BiasiLinux): the firmware GPU split (gpu_mem) is the graphics
@@ -2954,7 +3085,7 @@ sub webui_handle_request (@) {
       close($client);
       undef $client;
       my $cmd_b64=encode_base64("SET_CMA_MEMORY","")." ".encode_base64("$cma_val","");
-      system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo -E /usr/bin/PGenerator_cmd.pl) &");
+      system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo /usr/bin/PGenerator_cmd.pl) &");
      }
      elsif($memory_model eq "cma") {
       my $r='{"status":"error","message":"This Raspberry Pi 5 uses the CMA pool: send cma_mb (default, 64, 96, 128, 192, 256, 320, 384, 448 or 512)"}';
@@ -2968,7 +3099,7 @@ sub webui_handle_request (@) {
       close($client);
       undef $client;
       my $cmd_b64=encode_base64("SET_GPU_MEMORY","")." ".encode_base64("$gpu_val","");
-      system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo -E /usr/bin/PGenerator_cmd.pl) &");
+      system("(sleep 2 && PG_CMD=\"$cmd_b64\" sudo /usr/bin/PGenerator_cmd.pl) &");
      } else {
       my $r='{"status":"error","message":"Invalid GPU memory value"}';
       my $len=length($r);
@@ -11082,6 +11213,7 @@ our %webui_signal_value_ok=(
  dv_profile=>qr/^\d{1,2}$/,
  mode_idx=>qr/^(?:-1|\d{1,4})$/,
  calman_range=>qr/^[012]$/,
+ port85_system_commands=>qr/^[01]$/,
  calman_dv_container=>qr/^[12]$/,
  min_luma=>qr/^\d{1,6}(?:\.\d{1,6})?$/,
  max_luma=>qr/^\d{1,6}(?:\.\d{1,6})?$/,
@@ -11095,7 +11227,7 @@ our %webui_signal_value_ok=(
 # Limited, Dolby Vision fills in its primaries) would otherwise overwrite
 # what the software set and restart the renderer for a setting that is not
 # part of the signal.
-our %webui_conf_only_keys=(calman_range=>1,calman_dv_container=>1);
+our %webui_conf_only_keys=(calman_range=>1,calman_dv_container=>1,port85_system_commands=>1);
 
 # Writes a POST of only %webui_conf_only_keys keys. Same helper, read-back
 # and memory rules as webui_apply_config; nothing else is derived, the
@@ -11663,7 +11795,7 @@ sub webui_apply_config (@) {
   my @conf_deletes=();
   my %conf_written=();
   foreach my $k (sort keys %changes) {
-   next if($k eq "ip_pattern" || $k eq "port_pattern"); # read-only
+   next if($k eq "ip_pattern" || $k eq "port_pattern" || $k eq "update_repo"); # read-only (update_repo picks what root installs)
    my $cur=defined($pgenerator_conf{$k}) ? "$pgenerator_conf{$k}" : "";
    my $value_changed=("$changes{$k}" ne $cur);
    # A sudo + perl helper spawn costs ~0.35s and a signal-mode switch
@@ -13448,8 +13580,9 @@ sub webui_wifi_connect (@) {
  return "{\"status\":\"ok\",\"message\":\"$message\",\"ip\":\"$ip\"}";
 }
 
-sub webui_wifi_ap_json (@) {
- my %ap;
+# ssid and wpa_passphrase from hostapd.conf ("" when unset or unreadable).
+sub webui_wifi_ap_conf (@) {
+ my %ap=(ssid=>"",wpa_passphrase=>"");
  if(open(my $fh, "<", $hostapd_conf)) {
   while(<$fh>) {
    chomp;
@@ -13457,9 +13590,17 @@ sub webui_wifi_ap_json (@) {
   }
   close($fh);
  }
- my $ssid=&_webui_json_escape($ap{ssid}||"");
- my $pass=&_webui_json_escape($ap{wpa_passphrase}||"");
- return "{\"status\":\"ok\",\"ssid\":\"$ssid\",\"password\":\"$pass\"}";
+ return \%ap;
+}
+
+# The passphrase is write-only, as the home WiFi password (maintainer
+# 2026-11-27): without a login anyone on the network could read it here.
+# The WebUI learns only whether one is set; the TV menu shows it.
+sub webui_wifi_ap_json (@) {
+ my $ap=&webui_wifi_ap_conf();
+ my $ssid=&_webui_json_escape($ap->{ssid});
+ my $set=($ap->{wpa_passphrase} ne "") ? "true" : "false";
+ return "{\"status\":\"ok\",\"ssid\":\"$ssid\",\"password_set\":$set}";
 }
 
 # The "warning=" line of an OK from the AP root actions (PGenerator_cmd.pl
@@ -13495,6 +13636,8 @@ sub webui_wifi_ap_apply (@) {
  if("$ssid$pass"=~/[\x00-\x1f\x7f]/) {
   return '{"status":"error","message":"The network name or password contains a control character."}';
  }
+ # No password: keep the one that is set (the WebUI no longer sees it).
+ $pass=&webui_wifi_ap_conf()->{wpa_passphrase} if($pass eq "");
  if(length($pass)<8) {
   return '{"status":"error","message":"Password must be at least 8 characters"}';
  }
@@ -14360,7 +14503,12 @@ sub webui_tvmenu_base (@) {
  # a daemon restart (OTA updates do not reboot), so a renamed header would
  # otherwise keep showing the old name until the next reboot.
  my $brand="rampecho";
- my $hash=substr(Digest::MD5::md5_hex(join("|","v2",$brand,$lay->{height},@sig)),0,12);
+ # The WiFi AP's name and passphrase, top right: the WebUI no longer shows
+ # the passphrase (anyone on the network could read it there); here only
+ # someone in front of the screen sees it.
+ my $ap=&webui_wifi_ap_conf();
+ my $ap_line=($ap->{ssid} ne "" && $ap->{wpa_passphrase} ne "") ? "WiFi AP  $ap->{ssid}    Password  $ap->{wpa_passphrase}" : "";
+ my $hash=substr(Digest::MD5::md5_hex(join("|","v3",$brand,$ap_line,$lay->{height},@sig)),0,12);
  # MPC is ImageMagick's own pixel cache: read back without decoding, which
  # takes a menu step from 0.65 s to 0.2 s on the Pi.
  my $file="$_tvmenu_view_dir/base-$hash.mpc";
@@ -14372,6 +14520,7 @@ sub webui_tvmenu_base (@) {
  system($convert,"-size","${PGTVMenu::W}x$lay->{height}","xc:$_tvmenu_bg","-font",$_tvmenu_font,
   "-fill","#e3e6ea","-pointsize","46","-annotate","+$PGTVMenu::MARGIN_X+84","Patterns",
   "-fill","#7d8590","-pointsize","24","-annotate","+".($PGTVMenu::MARGIN_X+214)."+84",$brand,
+  ($ap_line ne "" ? ("-fill","#c9ced6","-pointsize","24","-gravity","NorthEast","-annotate","+$PGTVMenu::MARGIN_X+62",&_webui_tvmenu_text($ap_line),"+gravity") : ()),
   @args,"-depth","8","MPC:$part.mpc");
  return ("","") if(!-f "$part.mpc" || !-f "$part.cache" || !rename("$part.cache","$_tvmenu_view_dir/base-$hash.cache") || !rename("$part.mpc",$file));
  return ($file,$hash);

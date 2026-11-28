@@ -145,7 +145,7 @@ Without a display, the renderer waits instead of failing. The UI says so in a ba
 
 ### 📦 Safer OTA updates
 
-Updates come from **this fork's releases**. The dialog shows the release notes and download progress. You can **reinstall or roll back** to an earlier release. Packages are about **20 % smaller** (stripped binaries, no duplicate files, unused Python modules dropped). Update checks are cached (gentle on the GitHub API), and cross-site requests to the WebUI are refused.
+Updates come from **this fork's releases**. The dialog shows the release notes and download progress. You can **reinstall or roll back** to an earlier release. Packages are about **20 % smaller** (stripped binaries, no duplicate files, unused Python modules dropped). Update checks are cached (gentle on the GitHub API), and cross-site requests to the WebUI are refused. **Updates are signed:** the Pi installs a package only when its checksum carries a signature by the fork's release key (ECDSA P-256, checked with the Pi's own `openssl`) and names exactly the release asked for. An unsigned or altered package, or an older one passed off as a newer release, is refused before anything is touched.
 
 ### 🧹 Small things that add up
 
@@ -179,7 +179,7 @@ One button in **Output** runs thirteen signal modes (SDR RGB Limited/Full and YC
 
 ### 📺 Pattern menu and playlists on the TV remote
 
-Press **OK or Menu on the TV remote** and a menu of every pattern appears on the TV: G1 plates, test images and playlists as thumbnails. Arrows move, OK shows the pattern, left/right step on, Back returns to the menu. No phone needed.
+Press **OK or Menu on the TV remote** and a menu of every pattern appears on the TV: G1 plates, test images and playlists as thumbnails. Arrows move, OK shows the pattern, left/right step on, Back returns to the menu. No phone needed. The menu's top line shows the WiFi access point's name and password, which the WebUI no longer displays.
 
 <details>
 <summary>More detail</summary>
@@ -392,7 +392,11 @@ rampecho: **Scaling Type in the WebUI**, applies without a reboot
 
 **OTA**<br/>
 Original: latest release only<br/>
-rampecho: release notes, progress, **reinstall / rollback**, ~20 % smaller packages
+rampecho: **signed packages** (refused unless signed by the fork's release key), release notes, progress, **reinstall / rollback**, ~20 % smaller packages
+
+**Device commands over the network**<br/>
+Original: any client on port 85 could rewrite the boot configuration, network and WiFi, or reboot the Pi, and a web page could send them through a browser<br/>
+rampecho: **off by default** (Settings → Network Access); patterns and signal settings work as before, and HTTP requests on the pattern ports are closed unread
 
 > The *Original* lines describe upstream behaviour as stated in the fork commits that changed it. Run `git log origin/main..main` in a clone with both remotes for the full list.
 
@@ -465,7 +469,7 @@ rampecho: release notes, progress, **reinstall / rollback**, ~20 % smaller packa
 - **Wired PAN:** Ethernet cable directly between your computer and the Pi.
 - **Wired LAN:** Pi on your router or switch.
 - **USB:** the Pi 4's USB-C port to your computer: a network as CDC-NCM (Linux, macOS, Windows 11 without a driver), rebuilt as RNDIS when the computer does not use NCM within 5 s (older Windows). The Pi is `10.10.12.1`; the boot partition also appears as a drive.
-- **Wireless PAN:** join the Pi's access point (SSID `PGenerator`, password `PGenerator`).
+- **Wireless PAN:** join the Pi's access point (SSID `PGenerator`, password `PGenerator` until you change it; the on-screen pattern menu shows the current one).
   <p align="left"><img src="screenshots/join_wifi_pan.png" alt="Join WiFi PAN" width="200"/></p>
 - **Wireless LAN:** join your own Wi-Fi from **Connectivity** in the Web UI, after connecting once by one of the methods above. Joining and getting an address can take up to a minute; the Web UI waits for it.
 - **Wireless LAN over SSH** (`root` / `PGenerator!!$`): add the network to `/etc/wpa_supplicant/wpa_supplicant.conf` and restart the WiFi client; the Pi joins it on every boot from then on.
@@ -485,11 +489,11 @@ OTA updates stay within one `MAJOR.MINOR` family, with one bridge: 2.13 goes to 
 2. Flash the latest fork image (see above).
 3. Import the backup, then use **Check for Updates** to reach the newest release. A Pi on 2.13.51 or older is offered 2.13.52 first; check again from there to get 3.0.
 
-From then on the Pi follows this fork's releases. The update source is `usr/share/PGenerator/update-channel`, and an `update_repo=owner/repo` line in `PGenerator.conf` overrides it.
+From then on the Pi follows this fork's releases. The update source is `usr/share/PGenerator/update-channel`, and an `update_repo=owner/repo` line in `PGenerator.conf` overrides it. That line is edited as root on the Pi only: the Web UI, port 85 and a backup import leave it as it is (an imported backup keeps the Pi's own `update_repo`, `ip_pattern` and `port_pattern`).
 
 ### ⬆️ Updating
 
-- **Web UI:** **System → Software Update → Check for Updates → Install Update.** The dialog shows the release notes and download progress, then restarts the service. The release dropdown also lets you reinstall the current release or roll back to an earlier one; from 3.0 that includes the 2.13.x releases. Coming from 2.13.51 or older, install 2.13.52 first: only from there does the updater offer 3.0.
+- **Web UI:** **System → Software Update → Check for Updates → Install Update.** The dialog shows the release notes and download progress, then restarts the service. The release dropdown also lets you reinstall the current release or roll back to an earlier one, as long as that release carries a signature (the updater refuses unsigned ones). Coming from 2.13.51 or older, install 2.13.52 first: only from there does the updater offer 3.0.
 - **SSH** (`root` / `PGenerator!!$`):
 
   ```bash
@@ -505,7 +509,7 @@ rampecho is a free, open-source display calibration suite for the Raspberry Pi 4
 
 - **Precision HDMI patterns:** full-screen patches, windows, APL backgrounds, custom RGB triplets and patch sizes, drawn through DRM/KMS.
 - **HDR and Dolby Vision:** HDR10 (ST.2084 PQ with mastering metadata), HLG, standard and Low Latency Dolby Vision. AVI, DRM and DOVI infoframes are set correctly, and capabilities are detected from the EDID.
-- **Network control:** Calman (UPGCI, port 2100), ColourSpace / LightSpace and HCFR (port 85; ColourSpace also through its `PiTPG` entry, PiTPG protocol 2), DeviceControl, and the Resolve XML protocol (port 20002, outbound). UDP discovery runs on port 1977. Names and values a port 85 client sends never reach a shell or a path outside their directory, and templates never run as Perl (`EVALPATTERN` templates are refused, as `EVAL=` lines always were): template names (`GETCONF`, `SETCONF`, `TESTTEMPLATE`, `SAVEIMAGES`) are file names without `/` or control characters, `FUNCTIONS` names are plain words, and `VIDEO` plays only with `omxplayer` or `pg_diag_video_player`, a file under the video directory and a duration such as `30s`. A refused request is answered `ERR` (`ERR:Refused: …` where the command has a reply).
+- **Network control:** Calman (UPGCI, port 2100), ColourSpace / LightSpace and HCFR (port 85; ColourSpace also through its `PiTPG` entry, PiTPG protocol 2), DeviceControl, and the Resolve XML protocol (port 20002, outbound). UDP discovery runs on port 1977. Names and values a port 85 client sends never reach a shell or a path outside their directory, and templates never run as Perl (`EVALPATTERN` templates are refused, as `EVAL=` lines always were): template names (`GETCONF`, `SETCONF`, `TESTTEMPLATE`, `SAVEIMAGES`) are file names without `/` or control characters, `FUNCTIONS` names are plain words, and `VIDEO` plays only with `omxplayer` or `pg_diag_video_player`, a file under the video directory and a duration such as `30s`. A refused request is answered `ERR` (`ERR:Refused: …` where the command has a reply). Device commands (`SET_BOOT_CONFIG`, `SET_DTOVERLAY`, memory, network, WiFi, Bluetooth, host name, governor, `REBOOT`, `HALT`) are refused unless **System commands over the network** is on (Settings → Network Access); patterns and signal settings work either way. A connection that starts like an HTTP request (other than the image list's `GET`) is closed unread, so a web page cannot send commands to these ports through a browser.
 - **Web dashboard:** signal settings, diagnostic patterns, a live infoframe decoder, HDMI-CEC, networking, OTA, and meter measurements. The measurement workspaces can be hidden for pattern-only setups.
 - **LG AutoCal (SDR and HDR):** on-device closed-loop calibration of LG TVs: 26-point greyscale, RGB balance, 3D LUT and HDR tone mapping, with an optional Tone Mapping Shadow Fix.
 - **Meter workflows:** ArgyllCMS `spotread` with persistent sessions, greyscale, colour and saturation sweeps, CCSS management, and live ΔE and chromaticity charts.
@@ -629,7 +633,7 @@ Active signal, the infoframe decoder (AVI, DRM and SPD), the measured HDMI link 
 
 **Settings**
 
-Layout, zoom, **13 themes** in a Dark and a Light group (Glow is the default), Show/Hide for the Measure workspaces, and settings backup and restore
+Layout, zoom, **13 themes** in a Dark and a Light group (Glow is the default), Show/Hide for the Measure workspaces, settings backup and restore, and **Network Access** (whether software on ports 85 and 2100 may send device commands such as boot configuration, network or reboot; off by default)
 
 **Don't need the meter tools?** Settings → UI Settings → **Measure Workspaces → Hide** removes Calibration, Meter Profiler, 3D LUT and Display Profiler from the navigation, along with the meter status in the header. Saved measurements, profiles and LUTs are kept, and **Show** brings everything back. The choice is stored per browser.
 
@@ -868,7 +872,7 @@ GETSTATUS:CLIENTNAME=PerceptualPro
 
 PGenerator 1.6 treats this as a normal `GETSTATUS`. rampecho also shows the sanitised name in its status bar while the socket is connected. `CLIENTNAME:<name>` works as a standalone command, and so do the aliases `CLIENT_NAME` and `SOFTWARE`. `=` may replace `:`. Names are limited to 64 safe characters, and commands end with `0x02 0x0d`.
 
-**Privilege separation:** the daemon runs as `pgenerator`. Privileged operations (config writes, service control, updates) go through `PGenerator_cmd.pl` via `sudo`, with base64-encoded environment arguments. The WebUI refuses cross-site requests.
+**Privilege separation:** the daemon runs as `pgenerator`. Privileged operations (config writes, service control, updates) go through `PGenerator_cmd.pl` via `sudo`, with the arguments base64-encoded in `PG_CMD`. sudo resets the environment for it and keeps `PG_CMD` besides its own short default list; the helper sets `PATH` to the system directories itself, so nothing the caller puts in its environment decides which programs run as root. The WebUI refuses cross-site requests, and it answers only under the device's own names: an IP address, `rampecho.local`, `pgenerator.local`, `localhost` and its host name (as set, and its first part bare or with `.local`). Any other name, a router's DNS name such as `pgenerator.fritz.box` included, gets a page (for `/api/` paths a JSON error) naming the IP address and `rampecho.local`. This keeps a web page from reaching the WebUI under a name of its own (DNS rebinding). It also answers local networks only: loopback, the private ranges (`10.x`, `172.16–31.x`, `192.168.x`), link-local (`169.254.x`) and `100.64–127.x` (carrier NAT, Tailscale and other VPNs). A request from any other address, such as a port forwarded from the internet, gets a JSON error. A proxy or tunnel on the LAN or on the device itself counts as local: what it forwards is served. The device's own networks (access point, Bluetooth, USB) can only be set to private ranges.
 
 ### ⚙️ Configuration
 
@@ -899,7 +903,8 @@ PGenerator 1.6 treats this as a normal `GETSTATUS`. rampecho also shows the sani
 - `dv_tunnel_grid` (`1` or `0`, in `GET /api/config` only): whether Standard Dolby Vision goes out in PGenerator 1.6's tunnel, on its 8-bit grid (Standard transport, no PiTPG client, no full-range PiTPG tunnel, a Pi 4); the WebUI's meter series follow it, the Patch Companion's included. Not a setting: a posted value is ignored
 - `dv_vsif_form` (`1`=HDMI 1.4b PB4/PB5 0, `2`=Dolby form, empty): Standard DV infoframe form; the daemon leaves it empty so the kernel's own HDMI 1.4b VSIF (PB4 0x20, PB5 0x01, matching Murideo SIX-G and PGenerator 1.6) goes out (a posted value is ignored) and deletes a `1` or `2` from an older version at the next Dolby Vision renderer start
 - `dv_ll_bt2020` (`1`, empty): Low Latency DV with PB5 0x10; the daemon leaves it empty (PB5 0, as PGenerator 1.6; a posted value is ignored) and deletes a `1` from an older version at the next Dolby Vision renderer start
-- `update_repo` (`owner/repo`): Optional: override the OTA source (default from `update-channel`)
+- `update_repo` (`owner/repo`): Optional: override the OTA source (default from `update-channel`). Read-only like `ip_pattern`/`port_pattern`: set it as root in the file; `POST /api/config`, port 85 and a backup import leave it as it is
+- `port85_system_commands` (`1`, empty or `0`): lets network clients on ports 85 and 2100 send device commands (boot config, memory split, network, WiFi, Bluetooth visibility, host name, CPU governor, reboot, power off). Off by default; Settings → Network Access in the Web UI
 
 **LUT correction:** `/etc/PGenerator/lut.txt` holds per-channel deltas (`R,G,B=R_delta,G_delta,B_delta`, plus an `ALL` wildcard). The daemon applies them before writing pattern files.
 
@@ -928,7 +933,7 @@ All endpoints are on port 80 and return JSON.
 - **GET** `/api/wifi/scan`: Scan for Wi-Fi networks
 - **GET** `/api/wifi/status`: Wi-Fi connection status
 - **POST** `/api/wifi/connect`: Connect to Wi-Fi (`ssid`, `psk`)
-- **GET / POST** `/api/wifi/ap`: Read / set AP SSID and password
+- **GET / POST** `/api/wifi/ap`: Read the AP SSID and whether a password is set (`password_set`; the password itself is never sent, the TV menu shows it); set SSID and password (an empty password keeps the current one)
 - **GET** `/api/infoframes`: AVI, DRM and SPD InfoFrame hex data, whether SPD is on the wire
 - **GET** `/api/signal`: What the settings ask for (`requested`), what is on the cable (`sending`, `wire`: format, range, EOTF, depth, TMDS clock, and per setting field whether it `matches` or `differs` (`fields`), the sentence for each difference, `differences`, and the settings that comparison used, `compared`), the check against board and display (`check`), quiet `adjustments`, the current refusal (`refused`), the last HDMI link interruption during a measurement (`link_event`) and a test EDID in use or not applied (`test_edid`)
 - **GET** `/api/cec/status`: HDMI-CEC TV power status

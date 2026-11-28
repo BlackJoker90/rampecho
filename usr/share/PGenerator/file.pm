@@ -44,7 +44,7 @@ sub write_file(@) {
 sub read_from_file(@) {
  my $file = shift;
  my $content="";
- open(FILE,"$file");
+ open(FILE,"<",$file);
  while(<FILE>) {
   $content.=$_;
  }

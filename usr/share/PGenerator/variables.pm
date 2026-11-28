@@ -226,7 +226,7 @@ $serial_program_name="/usr/bin/PGenerator_serial.pl";
 
 $serial_name="ttyAMA";
 
-$sudo_cmd="sudo -E /usr/bin/PGenerator_cmd.pl";
+$sudo_cmd="sudo /usr/bin/PGenerator_cmd.pl";
 
 $ENV{LD_LIBRARY_PATH}="/usr/lib:/opt/vc/lib" if(-e "/dev/dri/card0");
 
